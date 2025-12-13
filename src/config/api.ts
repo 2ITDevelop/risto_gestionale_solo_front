@@ -1,6 +1,6 @@
 // API Configuration
 // Change this URL to point to your backend server
-export const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
+export const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://risto-api-522460212064.europe-west1.run.app';
 
 export const API_ENDPOINTS = {
   // Prenotazioni (Reservations)
