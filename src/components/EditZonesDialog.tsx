@@ -194,22 +194,25 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
 
     // ✅ SOLO touch: ascolto movimenti reali del dito (Safari-safe)
     if (touch) {
-      const update = (ev: Event) => {
-        const p = getClientXYFromEvent(ev);
-        if (p) lastPointerRef.current = p;
-      };
+  const update: EventListener = (ev) => {
+    const p = getClientXYFromEvent(ev);
+    if (p) lastPointerRef.current = p;
+  };
 
-      // init subito
-      update(e.activatorEvent);
+  // init subito
+  update(e.activatorEvent);
 
-      window.addEventListener('touchmove', update as any, { passive: true });
-      window.addEventListener('pointermove', update as any, { passive: true });
+  const opts: AddEventListenerOptions = { passive: true };
 
-      cleanupMoveListenerRef.current = () => {
-        window.removeEventListener('touchmove', update as any);
-        window.removeEventListener('pointermove', update as any);
-      };
-    }
+  window.addEventListener('touchmove', update, opts);
+  window.addEventListener('pointermove', update, opts);
+
+  cleanupMoveListenerRef.current = () => {
+    window.removeEventListener('touchmove', update);
+    window.removeEventListener('pointermove', update);
+  };
+}
+
   };
 
   /**
