@@ -119,7 +119,7 @@ const visualViewportOffsetModifier: Modifier = ({ transform }) => {
   };
 };
 
-const IOS_NUDGE = { x: 0, y: -14 }; // prova -10 / -12 / -16
+const IOS_NUDGE = { x: 0, y: -24 }; // prova -10 / -12 / -16
 
 const manualNudgeModifier: Modifier = ({ transform }) => {
   if (!isIOS()) return transform;
