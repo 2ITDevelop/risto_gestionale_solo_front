@@ -77,30 +77,6 @@ function getCellTipoZona(zones: ZonaSala[], x: number, y: number): TipoZona | nu
   return foundVivibile ? 'SPAZIO_VIVIBILE' : null;
 }
 
-/**
- * Estrae clientY dall'evento che ha attivato il drag, senza usare `any`.
- * dnd-kit espone `activatorEvent` come `Event`, quindi usiamo type guards.
- */
-function getClientYFromActivatorEvent(ev: Event): number | null {
-  // TouchEvent (mobile)
-  if (typeof TouchEvent !== 'undefined' && ev instanceof TouchEvent) {
-    const t = ev.touches.item(0);
-    return t ? t.clientY : null;
-  }
-
-  // PointerEvent (mouse/pen/touch su browser moderni)
-  if (typeof PointerEvent !== 'undefined' && ev instanceof PointerEvent) {
-    return ev.clientY;
-  }
-
-  // MouseEvent fallback (alcuni casi desktop)
-  if (ev instanceof MouseEvent) {
-    return ev.clientY;
-  }
-
-  return null;
-}
-
 /* ========================
    MAIN
    ======================== */
@@ -108,6 +84,7 @@ function getClientYFromActivatorEvent(ev: Event): number | null {
 export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogProps) {
   const updateZones = useUpdateZones();
 
+  // ✅ ref del contenitore scrollabile (DialogContent)
   const dialogScrollRef = useRef<HTMLDivElement | null>(null);
 
   const [zones, setZones] = useState<ZonaSala[]>(sala.zone || []);
@@ -141,13 +118,13 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
     setHoverCell(null);
   }, [open, sala.nome, sala.zone]);
 
-  /* ---------- dnd-kit (FIX MOBILE + SCROLL) ---------- */
+  /* ---------- dnd-kit ---------- */
 
   const sensors = useSensors(
     // Desktop / mouse
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
 
-    // Mobile: drag solo con pressione lunga (lo scroll resta normale)
+    // Mobile: drag solo con pressione lunga
     useSensor(TouchSensor, {
       activationConstraint: { delay: 250, tolerance: 10 },
     })
@@ -180,21 +157,23 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
     setHoverCell({ x: Number(x), y: Number(y) });
   };
 
-  // ✅ Scroll del DialogContent mentre trascini verso su/giù
+  /**
+   * ✅ SCROLL BASATO SULLA POSIZIONE DELLA ZONA (overlay), NON del dito
+   * Usa il rect tradotto dell'elemento attivo: e.active.rect.current.translated
+   */
   const handleDragMove = (e: DragMoveEvent) => {
     const container = dialogScrollRef.current;
-    if (!container) return;
+    const activeRect = e.active.rect.current.translated;
 
-    const clientY = getClientYFromActivatorEvent(e.activatorEvent);
-    if (clientY == null) return;
+    if (!container || !activeRect) return;
 
-    const rect = container.getBoundingClientRect();
+    const containerRect = container.getBoundingClientRect();
 
-    const EDGE = 80;      // px: vicino ai bordi parte lo scroll
-    const MAX_SPEED = 22; // px per evento: velocità max
+    const EDGE = 80; // px vicino ai bordi
+    const MAX_SPEED = 20; // px per evento
 
-    const distTop = clientY - rect.top;
-    const distBottom = rect.bottom - clientY;
+    const distTop = activeRect.top - containerRect.top;
+    const distBottom = containerRect.bottom - activeRect.bottom;
 
     let delta = 0;
 
@@ -515,10 +494,7 @@ function ZonePaletteItem({ zone }: { zone: NewZoneConfig }) {
   return (
     <div
       ref={setNodeRef}
-      className={cn(
-        'select-none rounded-xl bg-muted p-2 w-[120px]',
-        isDragging && 'opacity-60'
-      )}
+      className={cn('select-none rounded-xl bg-muted p-2 w-[120px]', isDragging && 'opacity-60')}
     >
       <div className="flex items-center justify-between gap-2">
         <span className="text-xs text-muted-foreground">Drag</span>
