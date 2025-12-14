@@ -80,7 +80,8 @@ function getCellTipoZona(zones: ZonaSala[], x: number, y: number): TipoZona | nu
 function getClientPoint(ev: Event): { x: number; y: number } | null {
   // Touch
   if (typeof TouchEvent !== 'undefined' && ev instanceof TouchEvent) {
-    const t = ev.touches.item(0) ?? ev.changedTouches.item(0);
+    // su iOS spesso è più affidabile changedTouches al momento dell’attivazione
+    const t = ev.changedTouches.item(0) ?? ev.touches.item(0);
     return t ? { x: t.clientX, y: t.clientY } : null;
   }
 
@@ -107,12 +108,18 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
   // ref del contenitore scrollabile (DialogContent)
   const dialogScrollRef = useRef<HTMLDivElement | null>(null);
 
+  // ✅ ref dell’overlay arancione (quello che “vedi” mentre trascini)
+  const dragOverlayRef = useRef<HTMLDivElement | null>(null);
+
   const [zones, setZones] = useState<ZonaSala[]>(sala.zone || []);
   const [activeDrag, setActiveDrag] = useState<NewZoneConfig | null>(null);
   const [hoverCell, setHoverCell] = useState<{ x: number; y: number } | null>(null);
 
-  // ✅ offset overlay per allinearlo al dito
-  const [dragOverlayOffset, setDragOverlayOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  // offset overlay per allinearlo al dito
+  const [dragOverlayOffset, setDragOverlayOffset] = useState<{ x: number; y: number }>({
+    x: 0,
+    y: 0,
+  });
 
   const initialGrid = useMemo(() => computeGridFromZones(sala.zone || []), [sala.zone]);
   const [gridWidth, setGridWidth] = useState<number>(initialGrid.w);
@@ -163,7 +170,7 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
 
     setActiveDrag(data.zone);
 
-    // ✅ Calcolo offset: (punto dito) - (top-left dell'elemento attivo)
+    // offset = (punto dito) - (top-left dell'elemento attivo originale)
     const p = getClientPoint(e.activatorEvent);
     const rect = e.active.rect.current.initial;
 
@@ -195,26 +202,27 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
   };
 
   /**
-   * Scroll basato sulla posizione della ZONA (overlay), NON del dito
+   * ✅ Scroll basato SULL’OVERLAY ARANCIONE (DOM reale), NON su e.active.rect
    */
-  const handleDragMove = (e: DragMoveEvent) => {
+  const handleDragMove = (_e: DragMoveEvent) => {
     const container = dialogScrollRef.current;
-    const activeRect = e.active.rect.current.translated;
+    const overlayEl = dragOverlayRef.current;
 
-    if (!container || !activeRect) return;
+    if (!container || !overlayEl) return;
 
     const containerRect = container.getBoundingClientRect();
+    const overlayRect = overlayEl.getBoundingClientRect();
 
-    const EDGE = 80; // px vicino ai bordi
+    const EDGE = 80; // px vicino ai bordi del dialog
     const MAX_SPEED = 20; // px per evento
 
-    const distTop = activeRect.top - containerRect.top;
-    const distBottom = containerRect.bottom - activeRect.bottom;
+    const distTop = overlayRect.top - containerRect.top;
+    const distBottom = containerRect.bottom - overlayRect.bottom;
 
     let delta = 0;
 
     if (distTop < EDGE) {
-      const t = (EDGE - distTop) / EDGE;
+      const t = (EDGE - distTop) / EDGE; // 0..1
       delta = -Math.ceil(t * MAX_SPEED);
     } else if (distBottom < EDGE) {
       const t = (EDGE - distBottom) / EDGE;
@@ -455,10 +463,11 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
             </div>
           </div>
 
-          {/* ✅ Overlay con offset: il blocco resta sotto il dito */}
+          {/* ✅ Overlay: offset + ref per misurare il blocco arancione */}
           <DragOverlay dropAnimation={null}>
             {activeDrag ? (
               <div
+                ref={dragOverlayRef}
                 style={{
                   transform: `translate(${-dragOverlayOffset.x}px, ${-dragOverlayOffset.y}px)`,
                 }}
