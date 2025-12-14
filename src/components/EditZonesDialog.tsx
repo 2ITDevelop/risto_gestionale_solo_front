@@ -12,8 +12,9 @@ import {
   useDroppable,
   useSensor,
   useSensors,
+  DragOverlay,
 } from '@dnd-kit/core';
-import { Trash2 } from 'lucide-react';
+import { GripVertical, Trash2 } from 'lucide-react';
 
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -113,15 +114,15 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
     setHoverCell(null);
   }, [open, sala.nome, sala.zone]);
 
-  /* ---------- dnd-kit (FIX MOBILE) ---------- */
+  /* ---------- dnd-kit (FIX MOBILE + SCROLL) ---------- */
 
   const sensors = useSensors(
     // Desktop / mouse
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
 
-    // ✅ Mobile: scroll libero, drag solo con "pressione lunga"
+    // Mobile: drag solo con pressione lunga (lo scroll resta normale)
     useSensor(TouchSensor, {
-      activationConstraint: { delay: 220, tolerance: 10 },
+      activationConstraint: { delay: 250, tolerance: 10 },
     })
   );
 
@@ -153,10 +154,10 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
   };
 
   const handleDragEnd = (e: DragEndEvent) => {
+    const data = e.active.data.current as DragData | undefined;
+
     resetDragState();
     if (!e.over) return;
-
-    const data = e.active.data.current as DragData | undefined;
     if (!data || data.type !== 'new-zone') return;
 
     const overId = String(e.over.id);
@@ -202,8 +203,8 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      {/* ✅ FIX: dialog scrollabile su mobile + touch-action per pan-y */}
-      <DialogContent className="max-w-4xl max-h-[85dvh] overflow-y-auto touch-pan-y">
+      {/* Dialog scrollabile: pan-y ok */}
+      <DialogContent className="max-w-4xl max-h-[85dvh] overflow-y-auto touch-pan-y overscroll-y-contain">
         <DialogHeader>
           <DialogTitle>Zone di {sala.nome}</DialogTitle>
           <DialogDescription>Trascina il rettangolo sulla griglia per creare le zone.</DialogDescription>
@@ -217,6 +218,9 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
           onDragOver={handleDragOver}
           onDragEnd={handleDragEnd}
           onDragCancel={resetDragState}
+          // ✅ IMPORTANTISSIMO: evita che dnd-kit provi ad autoscrollare
+          // e litighi con lo scroll del dialog.
+          autoScroll={false}
         >
           <div className="grid lg:grid-cols-[2fr,1fr] gap-6">
             {/* GRID */}
@@ -264,9 +268,6 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
                 </div>
               </div>
 
-              {/* (opzionale) se vuoi scrollare solo la griglia quando è grande:
-                  aggiungi: max-h-[60dvh] overflow-auto touch-pan-y
-              */}
               <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${gridWidth}, 1fr)` }}>
                 {gridCells.map((c) => (
                   <ZoneCell
@@ -338,7 +339,8 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
                 </div>
 
                 <p className="text-xs text-muted-foreground">
-                  Su mobile: fai “pressione lunga” sul rettangolo per iniziare il drag, altrimenti lo scroll resta fluido.
+                  Su mobile: trascina usando il “grip” (le palline). Se tocchi il rettangolo fuori dal grip,
+                  lo scroll resta fluido.
                 </p>
               </Card>
 
@@ -378,6 +380,11 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
               </Card>
             </div>
           </div>
+
+          {/* Overlay: evita “saltelli” e mantiene il drag pulito */}
+          <DragOverlay dropAnimation={null}>
+            {activeDrag ? <ZoneRectPreview {...activeDrag} /> : null}
+          </DragOverlay>
         </DndContext>
 
         <DialogFooter>
@@ -440,30 +447,49 @@ function ZoneCell(props: {
   );
 }
 
+/**
+ * ✅ FIX: il drag si attiva SOLO sul handle (grip), non su tutto il rettangolo.
+ * Così se l’utente prova a scrollare “partendo dal rettangolo”, non viene bloccato.
+ */
 function ZonePaletteItem({ zone }: { zone: NewZoneConfig }) {
-  const { setNodeRef, attributes, listeners, isDragging, transform } = useDraggable({
+  const { setNodeRef, attributes, listeners, isDragging } = useDraggable({
     id: 'new-zone',
     data: { type: 'new-zone', zone } satisfies DragData,
   });
 
-  const style: React.CSSProperties | undefined = transform
-    ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` }
-    : undefined;
-
   return (
     <div
       ref={setNodeRef}
-      {...attributes}
-      {...listeners}
-      style={style}
       className={cn(
-        'select-none cursor-grab',
-        // ✅ importante: non blocchiamo lo scroll del dialog,
-        // il drag parte grazie a TouchSensor delay
-        isDragging && 'opacity-60 cursor-grabbing z-50'
+        'select-none rounded-xl bg-muted p-2 w-[120px]',
+        isDragging && 'opacity-60'
       )}
     >
-      <ZoneRectPreview {...zone} />
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs text-muted-foreground">Drag</span>
+
+        {/* HANDLE: qui attacchiamo listeners+attributes */}
+        <button
+          type="button"
+          {...attributes}
+          {...listeners}
+          className={cn(
+            'inline-flex items-center justify-center rounded-md border bg-background',
+            'h-8 w-8',
+            'cursor-grab active:cursor-grabbing',
+            // ✅ SOLO il handle blocca il gesto (serve al drag)
+            'touch-none'
+          )}
+          style={{ touchAction: 'none' }}
+          aria-label="Trascina zona"
+        >
+          <GripVertical className="h-4 w-4 text-muted-foreground" />
+        </button>
+      </div>
+
+      <div className="mt-2 flex justify-center">
+        <ZoneRectPreview {...zone} />
+      </div>
     </div>
   );
 }
@@ -473,7 +499,7 @@ function ZoneRectPreview({ base, altezza, tipo }: NewZoneConfig) {
   const size = 80;
 
   return (
-    <div className="h-[96px] w-[96px] flex items-center justify-center bg-muted rounded-xl">
+    <div className="h-[96px] w-[96px] flex items-center justify-center bg-background/60 rounded-xl border">
       <div
         className={cn('rounded-md', tipo === 'SPAZIO_VIVIBILE' ? 'bg-amber-500' : 'bg-slate-600')}
         style={{
