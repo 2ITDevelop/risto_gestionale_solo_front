@@ -69,11 +69,36 @@ function getCellTipoZona(zones: ZonaSala[], x: number, y: number): TipoZona | nu
     const inside = x >= z.x && x < z.x + z.base && y >= z.y && y < z.y + z.altezza;
     if (!inside) continue;
 
+    // Priorità: NON vivibile sopra tutto
     if (z.tipo === 'SPAZIO_NON_VIVIBILE') return 'SPAZIO_NON_VIVIBILE';
     if (z.tipo === 'SPAZIO_VIVIBILE') foundVivibile = true;
   }
 
   return foundVivibile ? 'SPAZIO_VIVIBILE' : null;
+}
+
+/**
+ * Estrae clientY dall'evento che ha attivato il drag, senza usare `any`.
+ * dnd-kit espone `activatorEvent` come `Event`, quindi usiamo type guards.
+ */
+function getClientYFromActivatorEvent(ev: Event): number | null {
+  // TouchEvent (mobile)
+  if (typeof TouchEvent !== 'undefined' && ev instanceof TouchEvent) {
+    const t = ev.touches.item(0);
+    return t ? t.clientY : null;
+  }
+
+  // PointerEvent (mouse/pen/touch su browser moderni)
+  if (typeof PointerEvent !== 'undefined' && ev instanceof PointerEvent) {
+    return ev.clientY;
+  }
+
+  // MouseEvent fallback (alcuni casi desktop)
+  if (ev instanceof MouseEvent) {
+    return ev.clientY;
+  }
+
+  return null;
 }
 
 /* ========================
@@ -82,15 +107,16 @@ function getCellTipoZona(zones: ZonaSala[], x: number, y: number): TipoZona | nu
 
 export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogProps) {
   const updateZones = useUpdateZones();
-  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  const dialogScrollRef = useRef<HTMLDivElement | null>(null);
 
   const [zones, setZones] = useState<ZonaSala[]>(sala.zone || []);
   const [activeDrag, setActiveDrag] = useState<NewZoneConfig | null>(null);
   const [hoverCell, setHoverCell] = useState<{ x: number; y: number } | null>(null);
 
   const initialGrid = useMemo(() => computeGridFromZones(sala.zone || []), [sala.zone]);
-  const [gridWidth, setGridWidth] = useState(initialGrid.w);
-  const [gridHeight, setGridHeight] = useState(initialGrid.h);
+  const [gridWidth, setGridWidth] = useState<number>(initialGrid.w);
+  const [gridHeight, setGridHeight] = useState<number>(initialGrid.h);
 
   const [newZoneConfig, setNewZoneConfig] = useState<NewZoneConfig>({
     base: 2,
@@ -98,6 +124,9 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
     tipo: 'SPAZIO_VIVIBILE',
   });
 
+  /**
+   * Riallineo lo state locale quando riapri il dialog o cambia sala
+   */
   useEffect(() => {
     if (!open) return;
 
@@ -112,11 +141,16 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
     setHoverCell(null);
   }, [open, sala.nome, sala.zone]);
 
-  /* ---------- dnd-kit ---------- */
+  /* ---------- dnd-kit (FIX MOBILE + SCROLL) ---------- */
 
   const sensors = useSensors(
+    // Desktop / mouse
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 10 } })
+
+    // Mobile: drag solo con pressione lunga (lo scroll resta normale)
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 250, tolerance: 10 },
+    })
   );
 
   const resetDragState = () => {
@@ -130,36 +164,34 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
   };
 
   const handleDragOver = (e: DragOverEvent) => {
-    if (!e.over) return setHoverCell(null);
+    const over = e.over;
+    if (!over) {
+      setHoverCell(null);
+      return;
+    }
 
-    const id = String(e.over.id);
-    if (!id.startsWith('cell-')) return setHoverCell(null);
+    const id = String(over.id);
+    if (!id.startsWith('cell-')) {
+      setHoverCell(null);
+      return;
+    }
 
     const [, x, y] = id.split('-');
     setHoverCell({ x: Number(x), y: Number(y) });
   };
 
-  /**
-   * 🔥 AUTO-SCROLL MANUALE DURANTE DRAG
-   */
+  // ✅ Scroll del DialogContent mentre trascini verso su/giù
   const handleDragMove = (e: DragMoveEvent) => {
-    const container = scrollRef.current;
+    const container = dialogScrollRef.current;
     if (!container) return;
+
+    const clientY = getClientYFromActivatorEvent(e.activatorEvent);
+    if (clientY == null) return;
 
     const rect = container.getBoundingClientRect();
 
-    let clientY: number | undefined;
-
-    if (e.activatorEvent instanceof TouchEvent) {
-      clientY = e.activatorEvent.touches[0]?.clientY;
-    } else if (e.activatorEvent instanceof PointerEvent) {
-      clientY = e.activatorEvent.clientY;
-    }
-
-    if (typeof clientY !== 'number') return;
-
-    const EDGE = 70;
-    const MAX_SPEED = 18;
+    const EDGE = 80;      // px: vicino ai bordi parte lo scroll
+    const MAX_SPEED = 22; // px per evento: velocità max
 
     const distTop = clientY - rect.top;
     const distBottom = rect.bottom - clientY;
@@ -167,9 +199,11 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
     let delta = 0;
 
     if (distTop < EDGE) {
-      delta = -Math.ceil(((EDGE - distTop) / EDGE) * MAX_SPEED);
+      const t = (EDGE - distTop) / EDGE; // 0..1
+      delta = -Math.ceil(t * MAX_SPEED);
     } else if (distBottom < EDGE) {
-      delta = Math.ceil(((EDGE - distBottom) / EDGE) * MAX_SPEED);
+      const t = (EDGE - distBottom) / EDGE;
+      delta = Math.ceil(t * MAX_SPEED);
     }
 
     if (delta !== 0) {
@@ -179,22 +213,30 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
 
   const handleDragEnd = (e: DragEndEvent) => {
     const data = e.active.data.current as DragData | undefined;
+
     resetDragState();
+    if (!e.over) return;
+    if (!data || data.type !== 'new-zone') return;
 
-    if (!e.over || !data || data.type !== 'new-zone') return;
+    const overId = String(e.over.id);
+    if (!overId.startsWith('cell-')) return;
 
-    const id = String(e.over.id);
-    if (!id.startsWith('cell-')) return;
-
-    const [, xStr, yStr] = id.split('-');
+    const [, xStr, yStr] = overId.split('-');
     const x = Number(xStr);
     const y = Number(yStr);
 
     const { base, altezza, tipo } = data.zone;
 
+    // fuori griglia => non aggiungere
     if (x + base > gridWidth || y + altezza > gridHeight) return;
 
     setZones((prev) => [...prev, { x, y, base, altezza, tipo }]);
+  };
+
+  /* ---------- actions ---------- */
+
+  const handleRemoveZone = (index: number) => {
+    setZones((prev) => prev.filter((_, i) => i !== index));
   };
 
   const handleSave = async () => {
@@ -204,6 +246,8 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
     });
     onOpenChange(false);
   };
+
+  /* ---------- grid ---------- */
 
   const gridCells = useMemo(() => {
     const res: { x: number; y: number; tipoZona: TipoZona | null }[] = [];
@@ -218,12 +262,12 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        ref={scrollRef}
+        ref={dialogScrollRef}
         className="max-w-4xl max-h-[85dvh] overflow-y-auto touch-pan-y overscroll-y-contain"
       >
         <DialogHeader>
           <DialogTitle>Zone di {sala.nome}</DialogTitle>
-          <DialogDescription>Trascina dal grip per creare le zone.</DialogDescription>
+          <DialogDescription>Trascina il rettangolo sulla griglia per creare le zone.</DialogDescription>
         </DialogHeader>
 
         <DndContext
@@ -238,15 +282,58 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
           autoScroll={false}
         >
           <div className="grid lg:grid-cols-[2fr,1fr] gap-6">
+            {/* GRID */}
             <Card className="p-4">
-              <div
-                className="grid gap-1"
-                style={{ gridTemplateColumns: `repeat(${gridWidth}, 1fr)` }}
-              >
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <p className="text-sm font-medium">Griglia sala</p>
+                  <p className="text-xs text-muted-foreground">
+                    {gridWidth} × {gridHeight} celle
+                  </p>
+                </div>
+
+                <div className="flex items-end gap-3">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Larghezza</Label>
+                    <Input
+                      type="number"
+                      min={3}
+                      max={30}
+                      className="h-8 w-20"
+                      value={gridWidth}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        const clamped = Math.max(3, Math.min(30, Number.isFinite(v) ? v : 3));
+                        setGridWidth(clamped);
+                      }}
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <Label className="text-xs">Altezza</Label>
+                    <Input
+                      type="number"
+                      min={3}
+                      max={30}
+                      className="h-8 w-20"
+                      value={gridHeight}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        const clamped = Math.max(3, Math.min(30, Number.isFinite(v) ? v : 3));
+                        setGridHeight(clamped);
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${gridWidth}, 1fr)` }}>
                 {gridCells.map((c) => (
                   <ZoneCell
                     key={`${c.x}-${c.y}`}
-                    {...c}
+                    x={c.x}
+                    y={c.y}
+                    tipoZona={c.tipoZona}
                     ghost={activeDrag && hoverCell ? { ...activeDrag, anchor: hoverCell } : null}
                     gridWidth={gridWidth}
                     gridHeight={gridHeight}
@@ -255,13 +342,107 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
               </div>
             </Card>
 
-            <Card className="p-4">
-              <ZonePaletteItem zone={newZoneConfig} />
-            </Card>
+            {/* SIDEBAR */}
+            <div className="space-y-4">
+              <Card className="p-4 space-y-4">
+                <div className="space-y-1">
+                  <Label className="text-sm font-medium">Nuova zona</Label>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Tipo</Label>
+                    <select
+                      className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                      value={newZoneConfig.tipo}
+                      onChange={(e) =>
+                        setNewZoneConfig((prev) => ({ ...prev, tipo: e.target.value as TipoZona }))
+                      }
+                    >
+                      <option value="SPAZIO_VIVIBILE">Spazio vivibile</option>
+                      <option value="SPAZIO_NON_VIVIBILE">Spazio non vivibile</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <Label className="text-xs">Dimensioni (base × altezza)</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        type="number"
+                        min={1}
+                        max={gridWidth}
+                        value={newZoneConfig.base}
+                        onChange={(e) => {
+                          const v = Number(e.target.value);
+                          const next = Math.max(1, Math.min(gridWidth, Number.isFinite(v) ? v : 1));
+                          setNewZoneConfig((prev) => ({ ...prev, base: next }));
+                        }}
+                      />
+                      <Input
+                        type="number"
+                        min={1}
+                        max={gridHeight}
+                        value={newZoneConfig.altezza}
+                        onChange={(e) => {
+                          const v = Number(e.target.value);
+                          const next = Math.max(1, Math.min(gridHeight, Number.isFinite(v) ? v : 1));
+                          setNewZoneConfig((prev) => ({ ...prev, altezza: next }));
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex justify-center pt-1">
+                  <ZonePaletteItem zone={newZoneConfig} />
+                </div>
+
+                <p className="text-xs text-muted-foreground">
+                  Su mobile: trascina usando il “grip” (le palline). Se tocchi il rettangolo fuori dal grip,
+                  lo scroll resta fluido.
+                </p>
+              </Card>
+
+              <Card className="p-4">
+                <p className="text-sm font-medium mb-3">Zone create</p>
+
+                {zones.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">Nessuna zona creata.</p>
+                ) : (
+                  <div className="space-y-2 max-h-56 overflow-y-auto">
+                    {zones.map((z, index) => (
+                      <div
+                        key={`${z.tipo}-${z.x}-${z.y}-${z.base}-${z.altezza}-${index}`}
+                        className="flex items-center justify-between p-2 rounded-md bg-secondary/40 text-xs"
+                      >
+                        <div className="flex flex-col">
+                          <span className="font-medium">
+                            {z.tipo === 'SPAZIO_VIVIBILE' ? 'Vivibile' : 'Non vivibile'}
+                          </span>
+                          <span className="text-muted-foreground">
+                            Posizione ({z.x}, {z.y}) · {z.base}×{z.altezza}
+                          </span>
+                        </div>
+
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleRemoveZone(index)}
+                          className="text-muted-foreground hover:text-destructive"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Card>
+            </div>
           </div>
 
+          {/* Overlay: evita “saltelli” e mantiene il drag pulito */}
           <DragOverlay dropAnimation={null}>
-            {activeDrag && <ZoneRectPreview {...activeDrag} />}
+            {activeDrag ? <ZoneRectPreview {...activeDrag} /> : null}
           </DragOverlay>
         </DndContext>
 
@@ -269,7 +450,9 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Annulla
           </Button>
-          <Button onClick={handleSave}>Salva Zone</Button>
+          <Button onClick={handleSave} disabled={updateZones.isPending}>
+            {updateZones.isPending ? 'Salvataggio…' : 'Salva Zone'}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -289,13 +472,15 @@ function ZoneCell(props: {
   gridHeight: number;
 }) {
   const { x, y, tipoZona, ghost, gridWidth, gridHeight } = props;
+
   const { setNodeRef, isOver } = useDroppable({ id: `cell-${x}-${y}` });
+
+  const isVivibile = tipoZona === 'SPAZIO_VIVIBILE';
+  const isNonVivibile = tipoZona === 'SPAZIO_NON_VIVIBILE';
 
   let ghostClass = '';
   if (ghost) {
-    const valid =
-      ghost.anchor.x + ghost.base <= gridWidth &&
-      ghost.anchor.y + ghost.altezza <= gridHeight;
+    const valid = ghost.anchor.x + ghost.base <= gridWidth && ghost.anchor.y + ghost.altezza <= gridHeight;
 
     const inGhost =
       x >= ghost.anchor.x &&
@@ -311,31 +496,49 @@ function ZoneCell(props: {
       ref={setNodeRef}
       className={cn(
         'aspect-square border rounded-sm',
-        tipoZona === 'SPAZIO_VIVIBILE' && 'bg-emerald-200',
-        tipoZona === 'SPAZIO_NON_VIVIBILE' && 'bg-slate-400',
+        isVivibile && 'bg-emerald-200',
+        isNonVivibile && 'bg-slate-400',
+        !isVivibile && !isNonVivibile && 'bg-background',
         ghostClass,
-        isOver && 'ring-2 ring-primary'
+        isOver && 'ring-2 ring-primary ring-offset-1'
       )}
     />
   );
 }
 
 function ZonePaletteItem({ zone }: { zone: NewZoneConfig }) {
-  const { setNodeRef, attributes, listeners } = useDraggable({
+  const { setNodeRef, attributes, listeners, isDragging } = useDraggable({
     id: 'new-zone',
     data: { type: 'new-zone', zone } satisfies DragData,
   });
 
   return (
-    <div ref={setNodeRef} className="p-2 rounded-xl bg-muted w-[120px]">
-      <button
-        {...attributes}
-        {...listeners}
-        className="h-8 w-8 rounded-md border bg-background cursor-grab touch-none"
-        style={{ touchAction: 'none' }}
-      >
-        <GripVertical className="h-4 w-4" />
-      </button>
+    <div
+      ref={setNodeRef}
+      className={cn(
+        'select-none rounded-xl bg-muted p-2 w-[120px]',
+        isDragging && 'opacity-60'
+      )}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs text-muted-foreground">Drag</span>
+
+        <button
+          type="button"
+          {...attributes}
+          {...listeners}
+          className={cn(
+            'inline-flex items-center justify-center rounded-md border bg-background',
+            'h-8 w-8',
+            'cursor-grab active:cursor-grabbing',
+            'touch-none'
+          )}
+          style={{ touchAction: 'none' }}
+          aria-label="Trascina zona"
+        >
+          <GripVertical className="h-4 w-4 text-muted-foreground" />
+        </button>
+      </div>
 
       <div className="mt-2 flex justify-center">
         <ZoneRectPreview {...zone} />
@@ -349,9 +552,9 @@ function ZoneRectPreview({ base, altezza, tipo }: NewZoneConfig) {
   const size = 80;
 
   return (
-    <div className="h-[96px] w-[96px] flex items-center justify-center rounded-xl border">
+    <div className="h-[96px] w-[96px] flex items-center justify-center bg-background/60 rounded-xl border">
       <div
-        className={cn(tipo === 'SPAZIO_VIVIBILE' ? 'bg-amber-500' : 'bg-slate-600')}
+        className={cn('rounded-md', tipo === 'SPAZIO_VIVIBILE' ? 'bg-amber-500' : 'bg-slate-600')}
         style={{
           width: (base / max) * size,
           height: (altezza / max) * size,
