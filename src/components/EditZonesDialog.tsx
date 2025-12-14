@@ -119,6 +119,15 @@ const visualViewportOffsetModifier: Modifier = ({ transform }) => {
   };
 };
 
+const IOS_NUDGE = { x: 0, y: -14 }; // prova -10 / -12 / -16
+
+const manualNudgeModifier: Modifier = ({ transform }) => {
+  if (!isIOS()) return transform;
+  return { ...transform, x: transform.x + IOS_NUDGE.x, y: transform.y + IOS_NUDGE.y };
+};
+
+
+
 /* ========================
    MAIN
    ======================== */
@@ -284,10 +293,12 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
 
   // modifiers overlay: touch only
   const overlayModifiers = useMemo(() => {
-    if (!isTouchDrag) return undefined;
-    if (isIOS()) return [snapCenterToCursor, visualViewportOffsetModifier];
-    return [snapCenterToCursor];
-  }, [isTouchDrag]);
+  if (!isTouchDrag) return undefined;
+
+  if (isIOS()) return [snapCenterToCursor, visualViewportOffsetModifier, manualNudgeModifier];
+  return [snapCenterToCursor];
+}, [isTouchDrag]);
+
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
