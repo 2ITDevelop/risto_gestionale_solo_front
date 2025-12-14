@@ -82,6 +82,36 @@ function isTouchActivatorEvent(ev: Event): boolean {
   return false;
 }
 
+function getClientXYFromEvent(ev: Event): { x: number; y: number } | null {
+  // Touch
+  if (typeof TouchEvent !== 'undefined' && ev instanceof TouchEvent) {
+    const t = ev.touches[0] ?? ev.changedTouches[0];
+    return t ? { x: t.clientX, y: t.clientY } : null;
+  }
+  // Pointer
+  if (typeof PointerEvent !== 'undefined' && ev instanceof PointerEvent) {
+    return { x: ev.clientX, y: ev.clientY };
+  }
+  // Mouse fallback
+  if (ev instanceof MouseEvent) {
+    return { x: ev.clientX, y: ev.clientY };
+  }
+  return null;
+}
+
+function findCellIdFromPoint(x: number, y: number): string | null {
+  const el = document.elementFromPoint(x, y) as HTMLElement | null;
+  if (!el) return null;
+
+  let cur: HTMLElement | null = el;
+  while (cur) {
+    const id = cur.id;
+    if (id && id.startsWith('cell-')) return id;
+    cur = cur.parentElement;
+  }
+  return null;
+}
+
 /* ========================
    MAIN
    ======================== */
@@ -92,17 +122,18 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
   // dialog scroll (mobile)
   const dialogScrollRef = useRef<HTMLDivElement | null>(null);
 
-  // grid ref (per calcolare hoverCell in base alla posizione del blocco)
-  const gridRef = useRef<HTMLDivElement | null>(null);
-
   const [zones, setZones] = useState<ZonaSala[]>(sala.zone || []);
   const [activeDrag, setActiveDrag] = useState<NewZoneConfig | null>(null);
 
-  // questa è la “cella ancoraggio” del ghost, calcolata da onDragMove
+  // cella ancoraggio ghost (calcolata in onDragMove)
   const [hoverCell, setHoverCell] = useState<{ x: number; y: number } | null>(null);
 
   // true SOLO se il drag corrente è partito da touch
   const [isTouchDrag, setIsTouchDrag] = useState(false);
+
+  // tracking reale del dito/pointer
+  const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
+  const cleanupMoveListenerRef = useRef<(() => void) | null>(null);
 
   const initialGrid = useMemo(() => computeGridFromZones(sala.zone || []), [sala.zone]);
   const [gridWidth, setGridWidth] = useState<number>(initialGrid.w);
@@ -124,6 +155,11 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
     setGridWidth(g.w);
     setGridHeight(g.h);
 
+    // reset drag state
+    cleanupMoveListenerRef.current?.();
+    cleanupMoveListenerRef.current = null;
+    lastPointerRef.current = null;
+
     setActiveDrag(null);
     setHoverCell(null);
     setIsTouchDrag(false);
@@ -136,6 +172,10 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
   const sensors = useSensors(pointerSensor, touchSensor);
 
   const resetDragState = () => {
+    cleanupMoveListenerRef.current?.();
+    cleanupMoveListenerRef.current = null;
+    lastPointerRef.current = null;
+
     setActiveDrag(null);
     setHoverCell(null);
     setIsTouchDrag(false);
@@ -150,41 +190,96 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
     const touch = isTouchActivatorEvent(e.activatorEvent);
     setIsTouchDrag(touch);
 
-    // non “accendiamo” nulla subito: hoverCell la calcoliamo in onDragMove
     setHoverCell(null);
+
+    // ✅ SOLO touch: ascolto movimenti reali del dito (Safari-safe)
+    if (touch) {
+      const update = (ev: Event) => {
+        const p = getClientXYFromEvent(ev);
+        if (p) lastPointerRef.current = p;
+      };
+
+      // init subito
+      update(e.activatorEvent);
+
+      window.addEventListener('touchmove', update as any, { passive: true });
+      window.addEventListener('pointermove', update as any, { passive: true });
+
+      cleanupMoveListenerRef.current = () => {
+        window.removeEventListener('touchmove', update as any);
+        window.removeEventListener('pointermove', update as any);
+      };
+    }
   };
 
   /**
-   * ✅ QUI è la correzione chiave:
-   * - niente più ghost basato su onDragOver
-   * - calcolo hoverCell dalla posizione reale del blocco (rect translated)
-   * -> l’ombra segue il blocco, non “scatta” sulla griglia appena tocchi.
+   * ✅ Ghost che segue il blocco:
+   * - TOUCH: usa elementFromPoint sul dito -> l’ombra segue davvero il dito/overlay (Safari ok)
+   * - DESKTOP: usa rect.translated (va bene su desktop)
    */
   const handleDragMove = (e: DragMoveEvent) => {
     if (!activeDrag) return;
 
-    const gridEl = gridRef.current;
-    if (!gridEl) return;
+    // ===== TOUCH PATH (robusto su Safari) =====
+    if (isTouchDrag) {
+      const p = lastPointerRef.current;
+      if (!p) return;
 
-    const gridRect = gridEl.getBoundingClientRect();
+      const cellId = findCellIdFromPoint(p.x, p.y);
+      if (!cellId) {
+        setHoverCell(null);
+      } else {
+        const [, xStr, yStr] = cellId.split('-');
+        setHoverCell({ x: Number(xStr), y: Number(yStr) });
+      }
+
+      // autoscroll (touch): basato sul rect (ok)
+      const activeRect = e.active.rect.current.translated;
+      if (!activeRect) return;
+
+      const container = dialogScrollRef.current;
+      if (!container) return;
+
+      const containerRect = container.getBoundingClientRect();
+      const EDGE = 80;
+      const MAX_SPEED = 20;
+
+      const distTop = activeRect.top - containerRect.top;
+      const distBottom = containerRect.bottom - activeRect.bottom;
+
+      let delta = 0;
+      if (distTop < EDGE) {
+        const t = (EDGE - distTop) / EDGE;
+        delta = -Math.ceil(t * MAX_SPEED);
+      } else if (distBottom < EDGE) {
+        const t = (EDGE - distBottom) / EDGE;
+        delta = Math.ceil(t * MAX_SPEED);
+      }
+
+      if (delta !== 0) container.scrollTop += delta;
+      return;
+    }
+
+    // ===== DESKTOP PATH =====
     const activeRect = e.active.rect.current.translated;
-
     if (!activeRect) return;
 
-    // centro del blocco trascinato
+    // centro del blocco
     const cx = activeRect.left + activeRect.width / 2;
     const cy = activeRect.top + activeRect.height / 2;
 
-    const inside =
-      cx >= gridRect.left &&
-      cx <= gridRect.right &&
-      cy >= gridRect.top &&
-      cy <= gridRect.bottom;
+    // per desktop, mappo in base al dialog (stabile senza gridRef)
+    // NB: se vuoi mantenere la tua gridRef, puoi usarla, ma su desktop va bene anche così.
+    const gridEl = document.getElementById('zone-grid');
+    if (!gridEl) return;
+
+    const gridRect = gridEl.getBoundingClientRect();
+
+    const inside = cx >= gridRect.left && cx <= gridRect.right && cy >= gridRect.top && cy <= gridRect.bottom;
 
     if (!inside) {
       setHoverCell(null);
     } else {
-      // mappo la posizione nella griglia (approssimazione stabile anche con gap)
       const cellW = gridRect.width / gridWidth;
       const cellH = gridRect.height / gridHeight;
 
@@ -196,52 +291,24 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
 
       setHoverCell({ x, y });
     }
-
-    // autoscroll SOLO touch: basato sul blocco trascinato
-    if (!isTouchDrag) return;
-
-    const container = dialogScrollRef.current;
-    if (!container) return;
-
-    const containerRect = container.getBoundingClientRect();
-
-    const EDGE = 80;
-    const MAX_SPEED = 20;
-
-    const distTop = activeRect.top - containerRect.top;
-    const distBottom = containerRect.bottom - activeRect.bottom;
-
-    let delta = 0;
-    if (distTop < EDGE) {
-      const t = (EDGE - distTop) / EDGE;
-      delta = -Math.ceil(t * MAX_SPEED);
-    } else if (distBottom < EDGE) {
-      const t = (EDGE - distBottom) / EDGE;
-      delta = Math.ceil(t * MAX_SPEED);
-    }
-
-    if (delta !== 0) container.scrollTop += delta;
   };
 
   const handleDragEnd = (e: DragEndEvent) => {
     const data = e.active.data.current as DragData | undefined;
 
+    // salva coordinate usando hoverCell (così combacia col ghost)
+    const anchor = hoverCell;
+
     resetDragState();
-    if (!e.over) return;
+
     if (!data || data.type !== 'new-zone') return;
-
-    const overId = String(e.over.id);
-    if (!overId.startsWith('cell-')) return;
-
-    const [, xStr, yStr] = overId.split('-');
-    const x = Number(xStr);
-    const y = Number(yStr);
+    if (!anchor) return;
 
     const { base, altezza, tipo } = data.zone;
 
-    if (x + base > gridWidth || y + altezza > gridHeight) return;
+    if (anchor.x + base > gridWidth || anchor.y + altezza > gridHeight) return;
 
-    setZones((prev) => [...prev, { x, y, base, altezza, tipo }]);
+    setZones((prev) => [...prev, { x: anchor.x, y: anchor.y, base, altezza, tipo }]);
   };
 
   /* ---------- actions ---------- */
@@ -342,7 +409,7 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
               </div>
 
               <div
-                ref={gridRef}
+                id="zone-grid"
                 className="grid gap-1"
                 style={{ gridTemplateColumns: `repeat(${gridWidth}, 1fr)` }}
               >
@@ -496,7 +563,9 @@ function ZoneCell(props: {
 }) {
   const { x, y, tipoZona, ghost, gridWidth, gridHeight } = props;
 
-  const { setNodeRef, isOver } = useDroppable({ id: `cell-${x}-${y}` });
+  // IMPORTANT: id vero sull’elemento DOM -> elementFromPoint lo trova
+  const id = `cell-${x}-${y}`;
+  const { setNodeRef, isOver } = useDroppable({ id });
 
   const isVivibile = tipoZona === 'SPAZIO_VIVIBILE';
   const isNonVivibile = tipoZona === 'SPAZIO_NON_VIVIBILE';
@@ -516,6 +585,7 @@ function ZoneCell(props: {
 
   return (
     <div
+      id={id}
       ref={setNodeRef}
       className={cn(
         'aspect-square border rounded-sm',
@@ -541,6 +611,7 @@ function ZonePaletteItem({
     data: { type: 'new-zone', zone } satisfies DragData,
   });
 
+  // TOUCH: quando uso overlay, nascondo l’originale -> niente doppio blocco
   const shouldHideOriginal = hideWhileTouchDragging && isDragging;
 
   const style: React.CSSProperties | undefined = shouldHideOriginal
