@@ -6,6 +6,7 @@ import {
   DragStartEvent,
   MeasuringStrategy,
   PointerSensor,
+  TouchSensor,
   rectIntersection,
   useDraggable,
   useDroppable,
@@ -63,12 +64,7 @@ function getCellTipoZona(zones: ZonaSala[], x: number, y: number): TipoZona | nu
   let foundVivibile = false;
 
   for (const z of zones) {
-    const inside =
-      x >= z.x &&
-      x < z.x + z.base &&
-      y >= z.y &&
-      y < z.y + z.altezza;
-
+    const inside = x >= z.x && x < z.x + z.base && y >= z.y && y < z.y + z.altezza;
     if (!inside) continue;
 
     // Priorità: NON vivibile sopra tutto
@@ -101,8 +97,7 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
   });
 
   /**
-   * ✅ FIX: quando cambia la sala (o quando riapri il dialog),
-   * riallineo lo state locale con i dati “live” della cache.
+   * Riallineo lo state locale quando riapri il dialog o cambia sala
    */
   useEffect(() => {
     if (!open) return;
@@ -114,14 +109,21 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
     setGridWidth(g.w);
     setGridHeight(g.h);
 
-    // opzionale: reset preview drag
     setActiveDrag(null);
     setHoverCell(null);
   }, [open, sala.nome, sala.zone]);
 
-  /* ---------- dnd-kit ---------- */
+  /* ---------- dnd-kit (FIX MOBILE) ---------- */
 
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+  const sensors = useSensors(
+    // Desktop / mouse
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+
+    // ✅ Mobile: scroll libero, drag solo con "pressione lunga"
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 220, tolerance: 10 },
+    })
+  );
 
   const resetDragState = () => {
     setActiveDrag(null);
@@ -200,12 +202,11 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl">
+      {/* ✅ FIX: dialog scrollabile su mobile + touch-action per pan-y */}
+      <DialogContent className="max-w-4xl max-h-[85dvh] overflow-y-auto touch-pan-y">
         <DialogHeader>
           <DialogTitle>Zone di {sala.nome}</DialogTitle>
-          <DialogDescription>
-            Trascina il rettangolo sulla griglia per creare le zone.
-          </DialogDescription>
+          <DialogDescription>Trascina il rettangolo sulla griglia per creare le zone.</DialogDescription>
         </DialogHeader>
 
         <DndContext
@@ -263,6 +264,9 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
                 </div>
               </div>
 
+              {/* (opzionale) se vuoi scrollare solo la griglia quando è grande:
+                  aggiungi: max-h-[60dvh] overflow-auto touch-pan-y
+              */}
               <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${gridWidth}, 1fr)` }}>
                 {gridCells.map((c) => (
                   <ZoneCell
@@ -334,7 +338,7 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
                 </div>
 
                 <p className="text-xs text-muted-foreground">
-                  Trascina il rettangolo sulla griglia per posizionare la zona.
+                  Su mobile: fai “pressione lunga” sul rettangolo per iniziare il drag, altrimenti lo scroll resta fluido.
                 </p>
               </Card>
 
@@ -410,9 +414,7 @@ function ZoneCell(props: {
 
   let ghostClass = '';
   if (ghost) {
-    const valid =
-      ghost.anchor.x + ghost.base <= gridWidth &&
-      ghost.anchor.y + ghost.altezza <= gridHeight;
+    const valid = ghost.anchor.x + ghost.base <= gridWidth && ghost.anchor.y + ghost.altezza <= gridHeight;
 
     const inGhost =
       x >= ghost.anchor.x &&
@@ -454,7 +456,12 @@ function ZonePaletteItem({ zone }: { zone: NewZoneConfig }) {
       {...attributes}
       {...listeners}
       style={style}
-      className={cn('select-none cursor-grab', isDragging && 'opacity-60 cursor-grabbing z-50')}
+      className={cn(
+        'select-none cursor-grab',
+        // ✅ importante: non blocchiamo lo scroll del dialog,
+        // il drag parte grazie a TouchSensor delay
+        isDragging && 'opacity-60 cursor-grabbing z-50'
+      )}
     >
       <ZoneRectPreview {...zone} />
     </div>
