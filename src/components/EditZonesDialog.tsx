@@ -15,6 +15,7 @@ import {
   useSensors,
   DragOverlay,
 } from '@dnd-kit/core';
+import { snapCenterToCursor } from '@dnd-kit/modifiers';
 import { Trash2 } from 'lucide-react';
 
 import { Card } from '@/components/ui/card';
@@ -69,26 +70,11 @@ function getCellTipoZona(zones: ZonaSala[], x: number, y: number): TipoZona | nu
     const inside = x >= z.x && x < z.x + z.base && y >= z.y && y < z.y + z.altezza;
     if (!inside) continue;
 
-    // Priorità: NON vivibile sopra tutto
     if (z.tipo === 'SPAZIO_NON_VIVIBILE') return 'SPAZIO_NON_VIVIBILE';
     if (z.tipo === 'SPAZIO_VIVIBILE') foundVivibile = true;
   }
 
   return foundVivibile ? 'SPAZIO_VIVIBILE' : null;
-}
-
-function getClientPoint(ev: Event): { x: number; y: number } | null {
-  if (typeof TouchEvent !== 'undefined' && ev instanceof TouchEvent) {
-    const t = ev.changedTouches.item(0) ?? ev.touches.item(0);
-    return t ? { x: t.clientX, y: t.clientY } : null;
-  }
-  if (typeof PointerEvent !== 'undefined' && ev instanceof PointerEvent) {
-    return { x: ev.clientX, y: ev.clientY };
-  }
-  if (ev instanceof MouseEvent) {
-    return { x: ev.clientX, y: ev.clientY };
-  }
-  return null;
 }
 
 function isTouchActivatorEvent(ev: Event): boolean {
@@ -104,21 +90,17 @@ function isTouchActivatorEvent(ev: Event): boolean {
 export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogProps) {
   const updateZones = useUpdateZones();
 
-  // ref del contenitore scrollabile (DialogContent) — usato SOLO durante touch-drag
+  // container scrollabile del dialog (mobile)
   const dialogScrollRef = useRef<HTMLDivElement | null>(null);
-
-  // ref dell’overlay arancione (DOM reale) — usato SOLO durante touch-drag
+  // overlay DOM reale (mobile)
   const dragOverlayRef = useRef<HTMLDivElement | null>(null);
 
   const [zones, setZones] = useState<ZonaSala[]>(sala.zone || []);
   const [activeDrag, setActiveDrag] = useState<NewZoneConfig | null>(null);
   const [hoverCell, setHoverCell] = useState<{ x: number; y: number } | null>(null);
 
-  // ✅ diventa true solo se IL drag corrente è partito da touch
+  // true solo se il drag corrente è partito da touch
   const [isTouchDrag, setIsTouchDrag] = useState(false);
-
-  // offset overlay per allinearlo al dito (solo touch)
-  const [dragOverlayOffset, setDragOverlayOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
   const initialGrid = useMemo(() => computeGridFromZones(sala.zone || []), [sala.zone]);
   const [gridWidth, setGridWidth] = useState<number>(initialGrid.w);
@@ -143,23 +125,19 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
     setActiveDrag(null);
     setHoverCell(null);
     setIsTouchDrag(false);
-    setDragOverlayOffset({ x: 0, y: 0 });
   }, [open, sala.nome, sala.zone]);
 
   /* ---------- dnd-kit ---------- */
 
-  // ✅ hook sempre chiamati (niente condizionali)
+  // hook SEMPRE chiamati (niente condizionali)
   const pointerSensor = useSensor(PointerSensor, { activationConstraint: { distance: 6 } });
   const touchSensor = useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 10 } });
-
-  // ✅ ok: scegliere qui non viola le Rules of Hooks (non è un hook)
   const sensors = useSensors(pointerSensor, touchSensor);
 
   const resetDragState = () => {
     setActiveDrag(null);
     setHoverCell(null);
     setIsTouchDrag(false);
-    setDragOverlayOffset({ x: 0, y: 0 });
   };
 
   const handleDragStart = (e: DragStartEvent) => {
@@ -168,26 +146,9 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
 
     setActiveDrag(data.zone);
 
+    // se è touch => attivo overlay+scroll mobile
     const touch = isTouchActivatorEvent(e.activatorEvent);
     setIsTouchDrag(touch);
-
-    // ✅ offset SOLO se è touch-drag
-    if (!touch) {
-      setDragOverlayOffset({ x: 0, y: 0 });
-      return;
-    }
-
-    const p = getClientPoint(e.activatorEvent);
-    const rect = e.active.rect.current.initial;
-
-    if (p && rect) {
-      setDragOverlayOffset({
-        x: p.x - rect.left,
-        y: p.y - rect.top,
-      });
-    } else {
-      setDragOverlayOffset({ x: 0, y: 0 });
-    }
   };
 
   const handleDragOver = (e: DragOverEvent) => {
@@ -207,8 +168,8 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
   };
 
   /**
-   * ✅ Autoscroll SOLO durante touch-drag
-   * e basato sull’overlay arancione (DOM reale)
+   * Autoscroll SOLO durante touch-drag
+   * e basato sull’overlay (DOM reale) per seguire la forma “arancione”
    */
   const handleDragMove = (_e: DragMoveEvent) => {
     if (!isTouchDrag) return;
@@ -293,9 +254,9 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
         className={cn(
           // desktop: come prima
           'max-w-4xl',
-          // mobile: scrollabile (senza dipendere da JS)
+          // mobile: scrollabile
           'max-h-[85dvh] overflow-y-auto touch-pan-y overscroll-y-contain',
-          // desktop: disattivo gli effetti "mobile" via breakpoint
+          // desktop: disattivo gli effetti “mobile”
           'md:max-h-none md:overflow-visible md:touch-auto'
         )}
       >
@@ -313,7 +274,7 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
           onDragMove={handleDragMove}
           onDragEnd={handleDragEnd}
           onDragCancel={resetDragState}
-          // ✅ disattivo autoScroll solo durante touch-drag
+          // disattivo l’autoscroll interno di dnd-kit SOLO quando sto facendo touch-drag
           autoScroll={isTouchDrag ? false : undefined}
         >
           <div className="grid lg:grid-cols-[2fr,1fr] gap-6">
@@ -474,16 +435,11 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
             </div>
           </div>
 
-          {/* ✅ Overlay SOLO quando il drag è touch */}
+          {/* ✅ Overlay SOLO per touch-drag: desktop resta IDENTICO (nessun overlay) */}
           {isTouchDrag ? (
-            <DragOverlay dropAnimation={null}>
+            <DragOverlay dropAnimation={null} modifiers={[snapCenterToCursor]}>
               {activeDrag ? (
-                <div
-                  ref={dragOverlayRef}
-                  style={{
-                    transform: `translate(${-dragOverlayOffset.x}px, ${-dragOverlayOffset.y}px)`,
-                  }}
-                >
+                <div ref={dragOverlayRef}>
                   <ZoneRectPreview {...activeDrag} />
                 </div>
               ) : null}
