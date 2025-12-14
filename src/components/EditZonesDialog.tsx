@@ -77,6 +77,26 @@ function getCellTipoZona(zones: ZonaSala[], x: number, y: number): TipoZona | nu
   return foundVivibile ? 'SPAZIO_VIVIBILE' : null;
 }
 
+function getClientPoint(ev: Event): { x: number; y: number } | null {
+  // Touch
+  if (typeof TouchEvent !== 'undefined' && ev instanceof TouchEvent) {
+    const t = ev.touches.item(0) ?? ev.changedTouches.item(0);
+    return t ? { x: t.clientX, y: t.clientY } : null;
+  }
+
+  // Pointer
+  if (typeof PointerEvent !== 'undefined' && ev instanceof PointerEvent) {
+    return { x: ev.clientX, y: ev.clientY };
+  }
+
+  // Mouse fallback
+  if (ev instanceof MouseEvent) {
+    return { x: ev.clientX, y: ev.clientY };
+  }
+
+  return null;
+}
+
 /* ========================
    MAIN
    ======================== */
@@ -84,12 +104,15 @@ function getCellTipoZona(zones: ZonaSala[], x: number, y: number): TipoZona | nu
 export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogProps) {
   const updateZones = useUpdateZones();
 
-  // ✅ ref del contenitore scrollabile (DialogContent)
+  // ref del contenitore scrollabile (DialogContent)
   const dialogScrollRef = useRef<HTMLDivElement | null>(null);
 
   const [zones, setZones] = useState<ZonaSala[]>(sala.zone || []);
   const [activeDrag, setActiveDrag] = useState<NewZoneConfig | null>(null);
   const [hoverCell, setHoverCell] = useState<{ x: number; y: number } | null>(null);
+
+  // ✅ offset overlay per allinearlo al dito
+  const [dragOverlayOffset, setDragOverlayOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
   const initialGrid = useMemo(() => computeGridFromZones(sala.zone || []), [sala.zone]);
   const [gridWidth, setGridWidth] = useState<number>(initialGrid.w);
@@ -101,9 +124,6 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
     tipo: 'SPAZIO_VIVIBILE',
   });
 
-  /**
-   * Riallineo lo state locale quando riapri il dialog o cambia sala
-   */
   useEffect(() => {
     if (!open) return;
 
@@ -116,6 +136,7 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
 
     setActiveDrag(null);
     setHoverCell(null);
+    setDragOverlayOffset({ x: 0, y: 0 });
   }, [open, sala.nome, sala.zone]);
 
   /* ---------- dnd-kit ---------- */
@@ -133,11 +154,27 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
   const resetDragState = () => {
     setActiveDrag(null);
     setHoverCell(null);
+    setDragOverlayOffset({ x: 0, y: 0 });
   };
 
   const handleDragStart = (e: DragStartEvent) => {
     const data = e.active.data.current as DragData | undefined;
-    if (data?.type === 'new-zone') setActiveDrag(data.zone);
+    if (data?.type !== 'new-zone') return;
+
+    setActiveDrag(data.zone);
+
+    // ✅ Calcolo offset: (punto dito) - (top-left dell'elemento attivo)
+    const p = getClientPoint(e.activatorEvent);
+    const rect = e.active.rect.current.initial;
+
+    if (p && rect) {
+      setDragOverlayOffset({
+        x: p.x - rect.left,
+        y: p.y - rect.top,
+      });
+    } else {
+      setDragOverlayOffset({ x: 0, y: 0 });
+    }
   };
 
   const handleDragOver = (e: DragOverEvent) => {
@@ -158,8 +195,7 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
   };
 
   /**
-   * ✅ SCROLL BASATO SULLA POSIZIONE DELLA ZONA (overlay), NON del dito
-   * Usa il rect tradotto dell'elemento attivo: e.active.rect.current.translated
+   * Scroll basato sulla posizione della ZONA (overlay), NON del dito
    */
   const handleDragMove = (e: DragMoveEvent) => {
     const container = dialogScrollRef.current;
@@ -178,7 +214,7 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
     let delta = 0;
 
     if (distTop < EDGE) {
-      const t = (EDGE - distTop) / EDGE; // 0..1
+      const t = (EDGE - distTop) / EDGE;
       delta = -Math.ceil(t * MAX_SPEED);
     } else if (distBottom < EDGE) {
       const t = (EDGE - distBottom) / EDGE;
@@ -419,9 +455,17 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
             </div>
           </div>
 
-          {/* Overlay: evita “saltelli” e mantiene il drag pulito */}
+          {/* ✅ Overlay con offset: il blocco resta sotto il dito */}
           <DragOverlay dropAnimation={null}>
-            {activeDrag ? <ZoneRectPreview {...activeDrag} /> : null}
+            {activeDrag ? (
+              <div
+                style={{
+                  transform: `translate(${-dragOverlayOffset.x}px, ${-dragOverlayOffset.y}px)`,
+                }}
+              >
+                <ZoneRectPreview {...activeDrag} />
+              </div>
+            ) : null}
           </DragOverlay>
         </DndContext>
 
