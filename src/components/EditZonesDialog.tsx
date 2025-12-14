@@ -15,7 +15,7 @@ import {
   useSensors,
   DragOverlay,
 } from '@dnd-kit/core';
-import { GripVertical, Trash2 } from 'lucide-react';
+import { Trash2 } from 'lucide-react';
 
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -78,24 +78,23 @@ function getCellTipoZona(zones: ZonaSala[], x: number, y: number): TipoZona | nu
 }
 
 function getClientPoint(ev: Event): { x: number; y: number } | null {
-  // Touch
   if (typeof TouchEvent !== 'undefined' && ev instanceof TouchEvent) {
-    // su iOS spesso è più affidabile changedTouches al momento dell’attivazione
     const t = ev.changedTouches.item(0) ?? ev.touches.item(0);
     return t ? { x: t.clientX, y: t.clientY } : null;
   }
-
-  // Pointer
   if (typeof PointerEvent !== 'undefined' && ev instanceof PointerEvent) {
     return { x: ev.clientX, y: ev.clientY };
   }
-
-  // Mouse fallback
   if (ev instanceof MouseEvent) {
     return { x: ev.clientX, y: ev.clientY };
   }
-
   return null;
+}
+
+function isTouchActivatorEvent(ev: Event): boolean {
+  if (typeof TouchEvent !== 'undefined' && ev instanceof TouchEvent) return true;
+  if (typeof PointerEvent !== 'undefined' && ev instanceof PointerEvent) return ev.pointerType === 'touch';
+  return false;
 }
 
 /* ========================
@@ -105,21 +104,21 @@ function getClientPoint(ev: Event): { x: number; y: number } | null {
 export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogProps) {
   const updateZones = useUpdateZones();
 
-  // ref del contenitore scrollabile (DialogContent)
+  // ref del contenitore scrollabile (DialogContent) — usato SOLO durante touch-drag
   const dialogScrollRef = useRef<HTMLDivElement | null>(null);
 
-  // ✅ ref dell’overlay arancione (quello che “vedi” mentre trascini)
+  // ref dell’overlay arancione (DOM reale) — usato SOLO durante touch-drag
   const dragOverlayRef = useRef<HTMLDivElement | null>(null);
 
   const [zones, setZones] = useState<ZonaSala[]>(sala.zone || []);
   const [activeDrag, setActiveDrag] = useState<NewZoneConfig | null>(null);
   const [hoverCell, setHoverCell] = useState<{ x: number; y: number } | null>(null);
 
-  // offset overlay per allinearlo al dito
-  const [dragOverlayOffset, setDragOverlayOffset] = useState<{ x: number; y: number }>({
-    x: 0,
-    y: 0,
-  });
+  // ✅ diventa true solo se IL drag corrente è partito da touch
+  const [isTouchDrag, setIsTouchDrag] = useState(false);
+
+  // offset overlay per allinearlo al dito (solo touch)
+  const [dragOverlayOffset, setDragOverlayOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
   const initialGrid = useMemo(() => computeGridFromZones(sala.zone || []), [sala.zone]);
   const [gridWidth, setGridWidth] = useState<number>(initialGrid.w);
@@ -143,24 +142,23 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
 
     setActiveDrag(null);
     setHoverCell(null);
+    setIsTouchDrag(false);
     setDragOverlayOffset({ x: 0, y: 0 });
   }, [open, sala.nome, sala.zone]);
 
   /* ---------- dnd-kit ---------- */
 
-  const sensors = useSensors(
-    // Desktop / mouse
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+  // ✅ hook sempre chiamati (niente condizionali)
+  const pointerSensor = useSensor(PointerSensor, { activationConstraint: { distance: 6 } });
+  const touchSensor = useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 10 } });
 
-    // Mobile: drag solo con pressione lunga
-    useSensor(TouchSensor, {
-      activationConstraint: { delay: 250, tolerance: 10 },
-    })
-  );
+  // ✅ ok: scegliere qui non viola le Rules of Hooks (non è un hook)
+  const sensors = useSensors(pointerSensor, touchSensor);
 
   const resetDragState = () => {
     setActiveDrag(null);
     setHoverCell(null);
+    setIsTouchDrag(false);
     setDragOverlayOffset({ x: 0, y: 0 });
   };
 
@@ -170,7 +168,15 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
 
     setActiveDrag(data.zone);
 
-    // offset = (punto dito) - (top-left dell'elemento attivo originale)
+    const touch = isTouchActivatorEvent(e.activatorEvent);
+    setIsTouchDrag(touch);
+
+    // ✅ offset SOLO se è touch-drag
+    if (!touch) {
+      setDragOverlayOffset({ x: 0, y: 0 });
+      return;
+    }
+
     const p = getClientPoint(e.activatorEvent);
     const rect = e.active.rect.current.initial;
 
@@ -185,13 +191,12 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
   };
 
   const handleDragOver = (e: DragOverEvent) => {
-    const over = e.over;
-    if (!over) {
+    if (!e.over) {
       setHoverCell(null);
       return;
     }
 
-    const id = String(over.id);
+    const id = String(e.over.id);
     if (!id.startsWith('cell-')) {
       setHoverCell(null);
       return;
@@ -202,19 +207,21 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
   };
 
   /**
-   * ✅ Scroll basato SULL’OVERLAY ARANCIONE (DOM reale), NON su e.active.rect
+   * ✅ Autoscroll SOLO durante touch-drag
+   * e basato sull’overlay arancione (DOM reale)
    */
   const handleDragMove = (_e: DragMoveEvent) => {
+    if (!isTouchDrag) return;
+
     const container = dialogScrollRef.current;
     const overlayEl = dragOverlayRef.current;
-
     if (!container || !overlayEl) return;
 
     const containerRect = container.getBoundingClientRect();
     const overlayRect = overlayEl.getBoundingClientRect();
 
-    const EDGE = 80; // px vicino ai bordi del dialog
-    const MAX_SPEED = 20; // px per evento
+    const EDGE = 80;
+    const MAX_SPEED = 20;
 
     const distTop = overlayRect.top - containerRect.top;
     const distBottom = containerRect.bottom - overlayRect.bottom;
@@ -222,16 +229,14 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
     let delta = 0;
 
     if (distTop < EDGE) {
-      const t = (EDGE - distTop) / EDGE; // 0..1
+      const t = (EDGE - distTop) / EDGE;
       delta = -Math.ceil(t * MAX_SPEED);
     } else if (distBottom < EDGE) {
       const t = (EDGE - distBottom) / EDGE;
       delta = Math.ceil(t * MAX_SPEED);
     }
 
-    if (delta !== 0) {
-      container.scrollTop += delta;
-    }
+    if (delta !== 0) container.scrollTop += delta;
   };
 
   const handleDragEnd = (e: DragEndEvent) => {
@@ -250,7 +255,6 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
 
     const { base, altezza, tipo } = data.zone;
 
-    // fuori griglia => non aggiungere
     if (x + base > gridWidth || y + altezza > gridHeight) return;
 
     setZones((prev) => [...prev, { x, y, base, altezza, tipo }]);
@@ -286,7 +290,14 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         ref={dialogScrollRef}
-        className="max-w-4xl max-h-[85dvh] overflow-y-auto touch-pan-y overscroll-y-contain"
+        className={cn(
+          // desktop: come prima
+          'max-w-4xl',
+          // mobile: scrollabile (senza dipendere da JS)
+          'max-h-[85dvh] overflow-y-auto touch-pan-y overscroll-y-contain',
+          // desktop: disattivo gli effetti "mobile" via breakpoint
+          'md:max-h-none md:overflow-visible md:touch-auto'
+        )}
       >
         <DialogHeader>
           <DialogTitle>Zone di {sala.nome}</DialogTitle>
@@ -302,7 +313,8 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
           onDragMove={handleDragMove}
           onDragEnd={handleDragEnd}
           onDragCancel={resetDragState}
-          autoScroll={false}
+          // ✅ disattivo autoScroll solo durante touch-drag
+          autoScroll={isTouchDrag ? false : undefined}
         >
           <div className="grid lg:grid-cols-[2fr,1fr] gap-6">
             {/* GRID */}
@@ -421,8 +433,7 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
                 </div>
 
                 <p className="text-xs text-muted-foreground">
-                  Su mobile: trascina usando il “grip” (le palline). Se tocchi il rettangolo fuori dal grip,
-                  lo scroll resta fluido.
+                  Trascina il rettangolo sulla griglia per posizionare la zona.
                 </p>
               </Card>
 
@@ -463,19 +474,21 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
             </div>
           </div>
 
-          {/* ✅ Overlay: offset + ref per misurare il blocco arancione */}
-          <DragOverlay dropAnimation={null}>
-            {activeDrag ? (
-              <div
-                ref={dragOverlayRef}
-                style={{
-                  transform: `translate(${-dragOverlayOffset.x}px, ${-dragOverlayOffset.y}px)`,
-                }}
-              >
-                <ZoneRectPreview {...activeDrag} />
-              </div>
-            ) : null}
-          </DragOverlay>
+          {/* ✅ Overlay SOLO quando il drag è touch */}
+          {isTouchDrag ? (
+            <DragOverlay dropAnimation={null}>
+              {activeDrag ? (
+                <div
+                  ref={dragOverlayRef}
+                  style={{
+                    transform: `translate(${-dragOverlayOffset.x}px, ${-dragOverlayOffset.y}px)`,
+                  }}
+                >
+                  <ZoneRectPreview {...activeDrag} />
+                </div>
+              ) : null}
+            </DragOverlay>
+          ) : null}
         </DndContext>
 
         <DialogFooter>
@@ -539,39 +552,24 @@ function ZoneCell(props: {
 }
 
 function ZonePaletteItem({ zone }: { zone: NewZoneConfig }) {
-  const { setNodeRef, attributes, listeners, isDragging } = useDraggable({
+  const { setNodeRef, attributes, listeners, isDragging, transform } = useDraggable({
     id: 'new-zone',
     data: { type: 'new-zone', zone } satisfies DragData,
   });
 
+  const style: React.CSSProperties | undefined = transform
+    ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` }
+    : undefined;
+
   return (
     <div
       ref={setNodeRef}
-      className={cn('select-none rounded-xl bg-muted p-2 w-[120px]', isDragging && 'opacity-60')}
+      {...attributes}
+      {...listeners}
+      style={style}
+      className={cn('select-none cursor-grab', isDragging && 'opacity-60 cursor-grabbing z-50')}
     >
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-xs text-muted-foreground">Drag</span>
-
-        <button
-          type="button"
-          {...attributes}
-          {...listeners}
-          className={cn(
-            'inline-flex items-center justify-center rounded-md border bg-background',
-            'h-8 w-8',
-            'cursor-grab active:cursor-grabbing',
-            'touch-none'
-          )}
-          style={{ touchAction: 'none' }}
-          aria-label="Trascina zona"
-        >
-          <GripVertical className="h-4 w-4 text-muted-foreground" />
-        </button>
-      </div>
-
-      <div className="mt-2 flex justify-center">
-        <ZoneRectPreview {...zone} />
-      </div>
+      <ZoneRectPreview {...zone} />
     </div>
   );
 }
@@ -581,7 +579,7 @@ function ZoneRectPreview({ base, altezza, tipo }: NewZoneConfig) {
   const size = 80;
 
   return (
-    <div className="h-[96px] w-[96px] flex items-center justify-center bg-background/60 rounded-xl border">
+    <div className="h-[96px] w-[96px] flex items-center justify-center bg-muted rounded-xl">
       <div
         className={cn('rounded-md', tipo === 'SPAZIO_VIVIBILE' ? 'bg-amber-500' : 'bg-slate-600')}
         style={{
