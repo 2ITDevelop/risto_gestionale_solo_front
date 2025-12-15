@@ -263,7 +263,7 @@ const handleTouchEndPinch = (e: React.TouchEvent<HTMLDivElement>) => {
   // ✅ ZOOM REALE (NO transform sulla griglia)
   const cellSize = useMemo(() => Math.round(baseCell * zoom), [baseCell, zoom]);
 
-  const gridPixelH = useMemo(
+ /* const gridPixelH = useMemo(
   () => height * cellSize + Math.max(0, height - 1) * GAP,
   [height, cellSize, GAP]
 );
@@ -275,7 +275,7 @@ const effectiveViewportH = useMemo(() => {
   return clamp(Math.min(viewportH, contentH), minH, viewportH);
 }, [viewportH, contentH]);
 
-
+*/
   // scala solo l’icona/testo
   const contentScale = useMemo(() => clamp(cellSize / 40, 0.45, 1), [cellSize]);
 
@@ -529,57 +529,60 @@ const effectiveViewportH = useMemo(() => {
   style={{
     WebkitOverflowScrolling: 'touch',
     touchAction: 'manipulation', 
-    height: `${effectiveViewportH}px`,
+    height: `${viewportH}px`,
   }}
 >
 
                   {/* ✅ wrapper neutro: niente flex, altrimenti su iOS può “limitare” lo scroll */}
                   <div
-                    style={{
-                      padding: PAD,
-                      width: 'max-content',
-                      height: 'max-content',
-                      margin: '0 auto', // centra orizzontalmente
-                    }}
-                  >
-                    <div
-                      className="grid gap-[2px]"
-                      style={{
-                        gridTemplateColumns: `repeat(${width}, ${cellSize}px)`,
-                        gridAutoRows: `${cellSize}px`,
-                        width: width * cellSize + Math.max(0, width - 1) * GAP,
-                        height: height * cellSize + Math.max(0, height - 1) * GAP,
-                      }}
-                    >
-                      {gridCells.map(({ x, y, tipoZona }) => {
-                        const table = getTableAt(x, y);
+  style={{
+    padding: PAD,
+    width: 'max-content',
+    margin: '0 auto',
+    minHeight: `calc(${viewportH}px - ${PAD * 2}px)`,
+    display: 'flex',
+    alignItems: 'center',
+  }}
+>
+  <div
+    className="grid gap-[2px]"
+    style={{
+      gridTemplateColumns: `repeat(${width}, ${cellSize}px)`,
+      gridAutoRows: `${cellSize}px`,
+      width: width * cellSize + Math.max(0, width - 1) * GAP,
+      height: height * cellSize + Math.max(0, height - 1) * GAP,
+    }}
+  >
+    {gridCells.map(({ x, y, tipoZona }) => {
+      const table = getTableAt(x, y);
 
-                        const neighbors = table
-                          ? {
-                              left: !!getTableAt(x - 1, y),
-                              right: !!getTableAt(x + 1, y),
-                              up: !!getTableAt(x, y - 1),
-                              down: !!getTableAt(x, y + 1),
-                            }
-                          : undefined;
+      const neighbors = table
+        ? {
+            left: !!getTableAt(x - 1, y),
+            right: !!getTableAt(x + 1, y),
+            up: !!getTableAt(x, y - 1),
+            down: !!getTableAt(x, y + 1),
+          }
+        : undefined;
 
-                        return (
-                          <GridCell
-                            key={`${x}-${y}`}
-                            x={x}
-                            y={y}
-                            table={table}
-                            tipoZona={tipoZona}
-                            neighbors={neighbors}
-                            onDelete={() => setDeleteTarget({ x, y })}
-                            cellSize={cellSize}
-                            contentScale={contentScale}
-                          />
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
+      return (
+        <GridCell
+          key={`${x}-${y}`}
+          x={x}
+          y={y}
+          table={table}
+          tipoZona={tipoZona}
+          neighbors={neighbors}
+          onDelete={() => setDeleteTarget({ x, y })}
+          cellSize={cellSize}
+          contentScale={contentScale}
+        />
+      );
+    })}
+  </div>
+</div>
+</div>
+
 
                 <div className="mt-3 flex items-center gap-3">
                   <span className="text-[11px] text-muted-foreground w-10">0.5x</span>
