@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   DndContext,
   DragEndEvent,
@@ -44,7 +44,10 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 
-
+/** Dimensione “naturale” celle (prima era CELL_SIZE) */
+const BASE_CELL = 55;
+/** Deve matchare gap-[2px] */
+const CELL_GAP = 2;
 
 /* ======================
    Tipi FE
@@ -175,6 +178,51 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
     return base as UILayoutTavolo | undefined;
   };
 
+  /* ======================
+     FIT-TO-SCREEN (auto scale)
+     ====================== */
+
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const [scale, setScale] = useState(1);
+
+  const naturalGridWidth = useMemo(
+    () => width * BASE_CELL + Math.max(0, width - 1) * CELL_GAP,
+    [width]
+  );
+
+  const naturalGridHeight = useMemo(
+    () => height * BASE_CELL + Math.max(0, height - 1) * CELL_GAP,
+    [height]
+  );
+
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+
+    const ro = new ResizeObserver(() => {
+      const rect = el.getBoundingClientRect();
+
+      // margine “interno” per non toccare i bordi
+      const availableW = Math.max(1, rect.width - 8);
+      const availableH = Math.max(1, rect.height - 8);
+
+      const sW = availableW / naturalGridWidth;
+      const sH = availableH / naturalGridHeight;
+
+      // non ingrandire oltre 1, solo riduci se serve
+      const next = Math.min(1, sW, sH);
+
+      setScale(Number.isFinite(next) ? next : 1);
+    });
+
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [naturalGridWidth, naturalGridHeight]);
+
+  /* ======================
+     DND handlers
+     ====================== */
+
   const handleDragStart = (event: DragStartEvent) => {
     if (!canEditTables) return;
     setActiveId(String(event.active.id));
@@ -292,7 +340,7 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
     <DndContext onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
       <div className="grid lg:grid-cols-[1fr,300px] gap-6">
         {/* Main Grid */}
-        <Card className="glass-card">
+        <Card className="glass-card min-w-0">
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
               <div>
@@ -328,42 +376,60 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
             </div>
           </CardHeader>
 
-          <CardContent>
-  <div className="p-4 rounded-lg bg-secondary/30 flex justify-center">
-    <div className="-mx-1 px-1 w-full min-w-0">
-      <div
-        className="grid gap-[2px] w-full min-w-0"
-        style={{ gridTemplateColumns: `repeat(${width}, minmax(0, 1fr))` }}
-      >
-        {gridCells.map(({ x, y, tipoZona }) => {
-          const table = getTableAt(x, y);
+          {/* ✅ Fit-to-screen */}
+          <CardContent className="min-w-0">
+            <div
+              ref={viewportRef}
+              className={cn(
+                'p-4 rounded-lg bg-secondary/30 min-w-0 w-full overflow-hidden',
+                // su mobile assegniamo un’altezza “viewport-like” così può scalare anche in verticale
+                'h-[70vh] sm:h-[75vh] md:h-auto',
+                'flex items-start justify-center'
+              )}
+            >
+              <div
+                style={{
+                  width: naturalGridWidth,
+                  height: naturalGridHeight,
+                  transform: `scale(${scale})`,
+                  transformOrigin: 'top left',
+                }}
+              >
+                <div
+                  className="grid"
+                  style={{
+                    gap: `${CELL_GAP}px`,
+                    gridTemplateColumns: `repeat(${width}, ${BASE_CELL}px)`,
+                  }}
+                >
+                  {gridCells.map(({ x, y, tipoZona }) => {
+                    const table = getTableAt(x, y);
 
-          const neighbors = table
-            ? {
-                left: !!getTableAt(x - 1, y),
-                right: !!getTableAt(x + 1, y),
-                up: !!getTableAt(x, y - 1),
-                down: !!getTableAt(x, y + 1),
-              }
-            : undefined;
+                    const neighbors = table
+                      ? {
+                          left: !!getTableAt(x - 1, y),
+                          right: !!getTableAt(x + 1, y),
+                          up: !!getTableAt(x, y - 1),
+                          down: !!getTableAt(x, y + 1),
+                        }
+                      : undefined;
 
-          return (
-            <GridCell
-              key={`${x}-${y}`}
-              x={x}
-              y={y}
-              table={table}
-              tipoZona={tipoZona}
-              neighbors={neighbors}
-              onDelete={() => setDeleteTarget({ x, y })}
-            />
-          );
-        })}
-      </div>
-    </div>
-  </div>
-</CardContent>
-
+                    return (
+                      <GridCell
+                        key={`${x}-${y}`}
+                        x={x}
+                        y={y}
+                        table={table}
+                        tipoZona={tipoZona}
+                        neighbors={neighbors}
+                        onDelete={() => setDeleteTarget({ x, y })}
+                      />
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </CardContent>
         </Card>
 
         {/* Sidebar */}
@@ -465,11 +531,9 @@ function GridCell({ x, y, table, tipoZona, neighbors, onDelete }: GridCellProps)
 
   const { setNodeRef, isOver } = useDroppable({
     id: table ? `table-${x}-${y}` : `cell-${x}-${y}`,
-    // ✅ se è una cella vuota e NON vivibile, non può ricevere drop (niente “aggancio”)
     disabled: !table && !isVivibile,
   });
 
-  // CELLA VUOTA
   if (!table) {
     return (
       <div
@@ -484,7 +548,6 @@ function GridCell({ x, y, table, tipoZona, neighbors, onDelete }: GridCellProps)
     );
   }
 
-  // TAVOLO (droppable per prenotazioni)
   return (
     <div
       ref={setNodeRef}
@@ -575,6 +638,3 @@ function DraggableReservation({ reservation }: { reservation: UILayoutReservatio
     </div>
   );
 }
-
-
-
