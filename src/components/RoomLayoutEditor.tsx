@@ -79,6 +79,11 @@ function getSalaSize(sala: Sala): { width: number; height: number } {
   return { width: maxX, height: maxY };
 }
 
+function getTurnoFromOrario(orario?: string): Turno {
+  const hh = Number(orario?.split(':')?.[0]);
+  return hh < 15 ? 'PRANZO' : 'CENA';
+}
+
 /**
  * PRIORITÀ:
  * - se una cella ricade in una zona NON_VIVIBILE -> NON_VIVIBILE
@@ -140,7 +145,7 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
   const unassignedReservations = useMemo<UILayoutReservation[]>(() => {
     if (!reservations) return [];
     const list = reservations as UILayoutReservation[];
-    return list.filter((r) => r.turno === turno && !r.tavoloAssegnato);
+    return list.filter((r) => getTurnoFromOrario(r.orario) === turno && !r.tavoloAssegnato);
   }, [reservations, turno]);
 
   const { width, height } = useMemo(() => getSalaSize(sala), [sala]);
