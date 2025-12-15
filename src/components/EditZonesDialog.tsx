@@ -353,10 +353,10 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
                 </div>
               </div>
 
-              <div className="overflow-x-auto -mx-1 px-1">
+              <div className="-mx-1 px-1">
   <div
-    className="grid gap-1 w-max"
-    style={{ gridTemplateColumns: `repeat(${gridWidth}, 1fr)` }}
+    className="grid gap-1 w-full min-w-0"
+    style={{ gridTemplateColumns: `repeat(${gridWidth}, minmax(0, 1fr))` }}
   >
     {gridCells.map((c) => (
       <ZoneCell
