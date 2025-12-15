@@ -149,10 +149,14 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
   };
 
   /* ======================
-     Zoom “lente” stabile (NO glitch su cambio sala)
+     ✅ Zoom stabile + FIT a 1x (tutte le sale entrano)
+     - anti-glitch mobile: niente ResizeObserver
+     - retry se misure 0
+     - remount su cambio sala/data/turno
+     - padding/bordi “abbondanti”
      ====================== */
 
-  const layoutKey = `${sala.nome}-${date}-${turno}`; // <-- chiave unica
+  const layoutKey = `${sala.nome}-${date}-${turno}`;
 
   const gridViewportRef = useRef<HTMLDivElement | null>(null);
 
@@ -166,35 +170,32 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
   }, []);
 
   const GAP = 2; // gap-[2px]
-  const PAD = 8; // p-2 wrapper interno
-  const DESKTOP_MAX_VIEWPORT_H = 520;
+  const PAD = 12; // bordo interno “più largo” per evitare glitch di allineamento
+  const DESKTOP_VIEWPORT_H = 520;
 
-  const [viewportH, setViewportH] = useState<number>(DESKTOP_MAX_VIEWPORT_H);
-  const [baseCell, setBaseCell] = useState<number>(22);
   const [zoom, setZoom] = useState(1);
+  const [baseCell, setBaseCell] = useState(22);
+
+  const viewportH = useMemo(() => {
+    if (!isMobile) return DESKTOP_VIEWPORT_H;
+    const vh = Math.floor(window.innerHeight * 0.7);
+    return clamp(vh, 280, 720); // evita viewport troppo piccola/grande
+  }, [isMobile]);
 
   const cellSize = useMemo(() => Math.round(baseCell * zoom), [baseCell, zoom]);
   const contentScale = useMemo(() => clamp(cellSize / 40, 0.45, 1), [cellSize]);
 
-  // serve per “mantieni centro”
-  const prevCellSizeRef = useRef<number>(cellSize);
-
-  // ✅ RESET COMPLETO quando cambi sala/date/turno
+  // reset “hard” su cambio sala/date/turno
   useEffect(() => {
     setZoom(1);
-    setBaseCell(22);
-    setViewportH(DESKTOP_MAX_VIEWPORT_H);
-
     const el = gridViewportRef.current;
     if (el) {
       el.scrollLeft = 0;
       el.scrollTop = 0;
     }
-
-    prevCellSizeRef.current = 22; // reset “prev”
   }, [layoutKey]);
 
-  // ✅ FIT calc stabile (retry se misure 0)
+  // FIT: baseCell calcolata per far entrare tutta la sala a zoom=1
   useLayoutEffect(() => {
     const el = gridViewportRef.current;
     if (!el) return;
@@ -202,91 +203,46 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
     let raf = 0;
     let cancelled = false;
 
-    const compute = () => {
+    const computeFit = () => {
       if (cancelled) return;
 
-      const viewportW = el.clientWidth;
-      const viewportHReal = el.clientHeight;
+      const w = el.clientWidth;
+      const h = viewportH;
 
       // layout non pronto -> retry
-      if (!viewportW || (isMobile && !viewportHReal)) {
-        raf = requestAnimationFrame(compute);
+      if (!w || !h) {
+        raf = requestAnimationFrame(computeFit);
         return;
       }
 
       const totalGapW = Math.max(0, width - 1) * GAP;
       const totalGapH = Math.max(0, height - 1) * GAP;
 
-      const heightBudget = isMobile ? viewportHReal : DESKTOP_MAX_VIEWPORT_H;
+      const availW = Math.max(1, w - PAD * 2);
+      const availH = Math.max(1, h - PAD * 2);
 
-      const availableW = Math.max(1, viewportW - PAD * 2);
-      const availableH = Math.max(1, heightBudget - PAD * 2);
+      const byW = (availW - totalGapW) / width;
+      const byH = (availH - totalGapH) / height;
 
-      const sizeByW = (availableW - totalGapW) / width;
-      const sizeByH = (availableH - totalGapH) / height;
+      const next = Math.max(1, Math.floor(Math.min(byW, byH)));
 
-      const nextBase = Math.max(1, Math.floor(Math.min(sizeByW, sizeByH)));
-      setBaseCell(nextBase);
-
-      if (!isMobile) {
-        const gridH1 = height * nextBase + totalGapH + PAD * 2;
-        const nextViewportH = clamp(gridH1, 180, DESKTOP_MAX_VIEWPORT_H);
-        setViewportH(nextViewportH);
-      }
+      // evita micro-loop inutili
+      setBaseCell((prev) => (Math.abs(prev - next) <= 0 ? prev : next));
     };
 
-    compute();
+    computeFit();
 
-    const ro = new ResizeObserver(() => compute());
-    ro.observe(el);
-
-    window.addEventListener('resize', compute);
-    window.addEventListener('orientationchange', compute);
+    const onResize = () => computeFit();
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
 
     return () => {
       cancelled = true;
       cancelAnimationFrame(raf);
-      ro.disconnect();
-      window.removeEventListener('resize', compute);
-      window.removeEventListener('orientationchange', compute);
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('orientationchange', onResize);
     };
-  }, [layoutKey, width, height, isMobile]);
-
-  // ✅ mantiene il centro durante lo zoom (ma NON quando zoom=1 per evitare drift)
-  useEffect(() => {
-    const el = gridViewportRef.current;
-    if (!el) {
-      prevCellSizeRef.current = cellSize;
-      return;
-    }
-
-    const prev = prevCellSizeRef.current;
-    const next = cellSize;
-
-    if (prev === next) return;
-
-    // se stai tornando al FIT, non “inseguire” il centro
-    if (zoom === 1) {
-      prevCellSizeRef.current = next;
-      return;
-    }
-
-    const centerX = (el.scrollLeft + el.clientWidth / 2) / prev;
-    const centerY = (el.scrollTop + el.clientHeight / 2) / prev;
-
-    requestAnimationFrame(() => {
-      const targetLeft = centerX * next - el.clientWidth / 2;
-      const targetTop = centerY * next - el.clientHeight / 2;
-
-      const maxLeft = Math.max(0, el.scrollWidth - el.clientWidth);
-      const maxTop = Math.max(0, el.scrollHeight - el.clientHeight);
-
-      el.scrollLeft = clamp(targetLeft, 0, maxLeft);
-      el.scrollTop = clamp(targetTop, 0, maxTop);
-    });
-
-    prevCellSizeRef.current = next;
-  }, [cellSize, zoom]);
+  }, [layoutKey, width, height, viewportH]);
 
   /* ======================
      DND handlers
@@ -379,7 +335,8 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            Vai in <span className="font-medium">Impostazioni → Sale → Modifica Zone</span> per definire la mappa della sala.
+            Vai in <span className="font-medium">Impostazioni → Sale → Modifica Zone</span> per definire la mappa della
+            sala.
           </p>
         </CardContent>
       </Card>
@@ -422,7 +379,8 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
 
                 {!canEditTables && (
                   <span className="text-[11px] text-amber-600">
-                    Configurazione non attiva: crea/attiva la configurazione per questa data e turno per posizionare i tavoli.
+                    Configurazione non attiva: crea/attiva la configurazione per questa data e turno per posizionare i
+                    tavoli.
                   </span>
                 )}
               </div>
@@ -433,17 +391,23 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
             <div className="p-4 rounded-lg bg-secondary/30 w-full min-w-0">
               <div className="min-w-0">
                 <div
-                  key={layoutKey} // <-- REMOUNT quando cambi sala/date/turno
+                  key={layoutKey} // remount anti “stato sporco”
                   ref={gridViewportRef}
                   className="rounded-md w-full min-w-0 overflow-auto"
                   style={{
                     WebkitOverflowScrolling: 'touch',
                     touchAction: 'pan-x pan-y',
-                    height: isMobile ? '70vh' : `${viewportH}px`,
+                    height: `${viewportH}px`,
                   }}
                 >
-                  {/* a 1x è centrata, a zoom>1 parte dall’alto (più naturale) */}
-                  <div className={cn('w-full h-full p-2', zoom === 1 ? 'flex items-center justify-center' : 'flex items-start justify-center')}>
+                  {/* a 1x centrata; zoom>1 parte dall’alto (meno “saltelli”) */}
+                  <div
+                    className={cn(
+                      'w-full h-full',
+                      zoom === 1 ? 'flex items-center justify-center' : 'flex items-start justify-center'
+                    )}
+                    style={{ padding: PAD }}
+                  >
                     <div
                       className="grid gap-[2px]"
                       style={{
@@ -561,7 +525,9 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Eliminare il tavolo?</AlertDialogTitle>
-            <AlertDialogDescription>Questa azione rimuoverà il tavolo dalla posizione selezionata.</AlertDialogDescription>
+            <AlertDialogDescription>
+              Questa azione rimuoverà il tavolo dalla posizione selezionata.
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Annulla</AlertDialogCancel>
@@ -642,7 +608,10 @@ function GridCell({ x, y, table, tipoZona, neighbors, onDelete, cellSize, conten
         neighbors?.down && 'border-b-0 rounded-b-none'
       )}
     >
-      <div className="flex flex-col items-center justify-center leading-none" style={{ transform: `scale(${contentScale})`, transformOrigin: 'center' }}>
+      <div
+        className="flex flex-col items-center justify-center leading-none"
+        style={{ transform: `scale(${contentScale})`, transformOrigin: 'center' }}
+      >
         <Users className="h-4 w-4 mb-0.5" />
         {typeof table.capacita === 'number' && <span className="text-[11px] font-medium">{table.capacita}</span>}
       </div>
