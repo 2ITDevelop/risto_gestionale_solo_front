@@ -1,15 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  DndContext,
-  DragEndEvent,
-  DragOverlay,
-  DragStartEvent,
-  useDraggable,
-  useDroppable,
-} from '@dnd-kit/core';
+import { DndContext, DragEndEvent, DragOverlay, DragStartEvent, useDraggable, useDroppable } from '@dnd-kit/core';
 import { GripVertical, Trash2, Users } from 'lucide-react';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Slider } from '@/components/ui/slider';
 import { StatusDot } from '@/components/StatusBadge';
 import { PageLoader } from '@/components/LoadingSpinner';
 import { ErrorDisplay } from '@/components/ErrorDisplay';
@@ -102,6 +96,8 @@ function getCellTipoZona(sala: Sala, x: number, y: number): TipoZona | null {
 
 const isCellVivibile = (tipoZona: TipoZona | null) => tipoZona === 'SPAZIO_VIVIBILE';
 
+const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
+
 /* ======================
    Component
    ====================== */
@@ -154,8 +150,8 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
   };
 
   /* ======================
-     ✅ Zoom SOLO griglia: pinch mobile + scroll solo nella card
-     - zoom = moltiplicatore celle
+     ✅ Zoom SOLO griglia: slider laterale
+     - baseCell = fit-to-card
      - cellSize = baseCell * zoom
      ====================== */
 
@@ -170,7 +166,6 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
     return () => mq.removeEventListener?.('change', update);
   }, []);
 
-  // baseCell: dimensione “fit” (in px) calcolata sul viewport della card
   const [baseCell, setBaseCell] = useState<number>(22);
 
   useEffect(() => {
@@ -193,9 +188,8 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
       const sizeByW = (availableW - totalGapW) / width;
       const sizeByH = (availableH - totalGapH) / height;
 
-      // fit-to-card
       const next = Math.floor(Math.min(sizeByW, sizeByH));
-      setBaseCell(Math.max(10, next)); // minimo sensato
+      setBaseCell(Math.max(10, next));
     };
 
     resize();
@@ -212,66 +206,10 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
     };
   }, [width, height]);
 
-  const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
-
   const [zoom, setZoom] = useState(1);
-  const zoomRef = useRef(1);
-  useEffect(() => {
-    zoomRef.current = zoom;
-  }, [zoom]);
-
-  // Pinch via Pointer Events (PWA iOS friendly)
-  const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
-  const pinchStartRef = useRef<{ dist: number; zoom: number } | null>(null);
 
   const cellSize = useMemo(() => Math.round(baseCell * zoom), [baseCell, zoom]);
   const contentScale = useMemo(() => clamp(cellSize / 40, 0.45, 1), [cellSize]);
-
-  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!isMobile) return;
-    if (e.pointerType !== 'touch') return;
-
-    // cattura per avere move anche se “scappa”
-    e.currentTarget.setPointerCapture?.(e.pointerId);
-
-    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-
-    if (pointersRef.current.size === 2) {
-      const pts = Array.from(pointersRef.current.values());
-      const dx = pts[0].x - pts[1].x;
-      const dy = pts[0].y - pts[1].y;
-      pinchStartRef.current = { dist: Math.hypot(dx, dy), zoom: zoomRef.current };
-    }
-  };
-
-  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!isMobile) return;
-    if (e.pointerType !== 'touch') return;
-
-    if (!pointersRef.current.has(e.pointerId)) return;
-    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-
-    if (pointersRef.current.size !== 2) return;
-    if (!pinchStartRef.current) return;
-
-    const pts = Array.from(pointersRef.current.values());
-    const dx = pts[0].x - pts[1].x;
-    const dy = pts[0].y - pts[1].y;
-    const dist = Math.hypot(dx, dy);
-
-    const ratio = dist / pinchStartRef.current.dist;
-    const nextZoom = clamp(pinchStartRef.current.zoom * ratio, 1, 3.5);
-
-    // niente preventDefault qui: lasciamo che lo scroll rimanga 1 dito.
-    setZoom(nextZoom);
-  };
-
-  const endPointer = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (e.pointerType !== 'touch') return;
-
-    pointersRef.current.delete(e.pointerId);
-    if (pointersRef.current.size < 2) pinchStartRef.current = null;
-  };
 
   /* ======================
      DND handlers
@@ -364,7 +302,8 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            Vai in <span className="font-medium">Impostazioni → Sale → Modifica Zone</span> per definire la mappa della sala.
+            Vai in <span className="font-medium">Impostazioni → Sale → Modifica Zone</span> per definire la mappa della
+            sala.
           </p>
         </CardContent>
       </Card>
@@ -385,11 +324,7 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
                 <CardTitle>{sala.nome}</CardTitle>
                 <CardDescription>
                   {tables?.length || 0} tavoli · {width}x{height} griglia
-                  {isMobile && (
-                    <span className="ml-2 text-xs text-muted-foreground">
-                      · zoom {zoom.toFixed(2)}x
-                    </span>
-                  )}
+                  <span className="ml-2 text-xs text-muted-foreground">· zoom {zoom.toFixed(2)}x</span>
                 </CardDescription>
               </div>
 
@@ -411,72 +346,97 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
 
                 {!canEditTables && (
                   <span className="text-[11px] text-amber-600">
-                    Configurazione non attiva: crea/attiva la configurazione per questa data e turno per posizionare i tavoli.
+                    Configurazione non attiva: crea/attiva la configurazione per questa data e turno per posizionare i
+                    tavoli.
                   </span>
                 )}
               </div>
             </div>
           </CardHeader>
 
-          {/* ✅ scroll SOLO qui + pinch SOLO qui */}
+          {/* ✅ scroll SOLO qui + slider zoom SOLO qui */}
           <CardContent className="min-w-0">
             <div className="p-4 rounded-lg bg-secondary/30 w-full min-w-0">
-              <div
-                ref={gridViewportRef}
-                className={cn(
-                  'rounded-md w-full min-w-0',
-                  // su mobile: scroll interno
-                  isMobile ? 'overflow-auto' : 'overflow-hidden'
-                )}
-                style={{
-                  WebkitOverflowScrolling: 'touch',
-                  // importante: scroll 1 dito, pinch 2 dita (noi gestiamo pinch con pointer events)
-                  touchAction: 'pan-x pan-y',
-                  maxHeight: isMobile ? '70vh' : undefined, // se vuoi evitare che “scappi” fuori
-                }}
-                onPointerDown={onPointerDown}
-                onPointerMove={onPointerMove}
-                onPointerUp={endPointer}
-                onPointerCancel={endPointer}
-              >
-                {/* questo wrapper crea area scrollabile quando zoom > 1 */}
-                <div style={{ padding: 2 }}>
+              <div className="flex gap-3 items-stretch min-w-0">
+                {/* viewport scrollabile */}
+                <div className="flex-1 min-w-0">
                   <div
-                    className="grid gap-[2px]"
+                    ref={gridViewportRef}
+                    className={cn('rounded-md w-full min-w-0', isMobile ? 'overflow-auto' : 'overflow-hidden')}
                     style={{
-                      gridTemplateColumns: `repeat(${width}, ${cellSize}px)`,
-                      gridAutoRows: `${cellSize}px`,
-                      width: width * cellSize + Math.max(0, width - 1) * 2,
-                      height: height * cellSize + Math.max(0, height - 1) * 2,
+                      WebkitOverflowScrolling: 'touch',
+                      touchAction: 'pan-x pan-y',
+                      maxHeight: isMobile ? '70vh' : undefined,
                     }}
                   >
-                    {gridCells.map(({ x, y, tipoZona }) => {
-                      const table = getTableAt(x, y);
+                    <div style={{ padding: 2 }}>
+                      <div
+                        className="grid gap-[2px]"
+                        style={{
+                          gridTemplateColumns: `repeat(${width}, ${cellSize}px)`,
+                          gridAutoRows: `${cellSize}px`,
+                          width: width * cellSize + Math.max(0, width - 1) * 2,
+                          height: height * cellSize + Math.max(0, height - 1) * 2,
+                        }}
+                      >
+                        {gridCells.map(({ x, y, tipoZona }) => {
+                          const table = getTableAt(x, y);
 
-                      const neighbors = table
-                        ? {
-                            left: !!getTableAt(x - 1, y),
-                            right: !!getTableAt(x + 1, y),
-                            up: !!getTableAt(x, y - 1),
-                            down: !!getTableAt(x, y + 1),
-                          }
-                        : undefined;
+                          const neighbors = table
+                            ? {
+                                left: !!getTableAt(x - 1, y),
+                                right: !!getTableAt(x + 1, y),
+                                up: !!getTableAt(x, y - 1),
+                                down: !!getTableAt(x, y + 1),
+                              }
+                            : undefined;
 
-                      return (
-                        <GridCell
-                          key={`${x}-${y}`}
-                          x={x}
-                          y={y}
-                          table={table}
-                          tipoZona={tipoZona}
-                          neighbors={neighbors}
-                          onDelete={() => setDeleteTarget({ x, y })}
-                          cellSize={cellSize}
-                          contentScale={contentScale}
-                        />
-                      );
-                    })}
+                          return (
+                            <GridCell
+                              key={`${x}-${y}`}
+                              x={x}
+                              y={y}
+                              table={table}
+                              tipoZona={tipoZona}
+                              neighbors={neighbors}
+                              onDelete={() => setDeleteTarget({ x, y })}
+                              cellSize={cellSize}
+                              contentScale={contentScale}
+                            />
+                          );
+                        })}
+                      </div>
+                    </div>
                   </div>
+                </div>
+
+                {/* leva zoom (tutta nella card) */}
+                <div className="w-10 flex flex-col items-center justify-between py-2">
+                  <span className="text-[11px] text-muted-foreground">+</span>
+
+                  <div className="flex-1 flex items-center justify-center">
+                    <div className="h-56 flex items-center justify-center">
+                      <div className="rotate-[-90deg] w-56">
+                        <Slider
+                          value={[zoom]}
+                          min={1}
+                          max={3.5}
+                          step={0.05}
+                          onValueChange={(v) => setZoom(v[0] ?? 1)}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <span className="text-[11px] text-muted-foreground">−</span>
+
+                  <button
+                    type="button"
+                    className="mt-2 text-[11px] text-muted-foreground hover:text-foreground"
+                    onClick={() => setZoom(1)}
+                  >
+                    reset
+                  </button>
                 </div>
               </div>
             </div>
@@ -502,9 +462,7 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
             </CardHeader>
             <CardContent>
               {unassignedReservations.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-4">
-                  Nessuna prenotazione da assegnare
-                </p>
+                <p className="text-sm text-muted-foreground text-center py-4">Nessuna prenotazione da assegnare</p>
               ) : (
                 <div className="space-y-2">
                   {unassignedReservations.map((r, i) => (
@@ -536,9 +494,7 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Eliminare il tavolo?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Questa azione rimuoverà il tavolo dalla posizione selezionata.
-            </AlertDialogDescription>
+            <AlertDialogDescription>Questa azione rimuoverà il tavolo dalla posizione selezionata.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Annulla</AlertDialogCancel>
@@ -577,16 +533,7 @@ interface GridCellProps {
   contentScale: number;
 }
 
-function GridCell({
-  x,
-  y,
-  table,
-  tipoZona,
-  neighbors,
-  onDelete,
-  cellSize,
-  contentScale,
-}: GridCellProps) {
+function GridCell({ x, y, table, tipoZona, neighbors, onDelete, cellSize, contentScale }: GridCellProps) {
   const isVivibile = tipoZona === 'SPAZIO_VIVIBILE';
 
   const { setNodeRef, isOver } = useDroppable({
@@ -633,9 +580,7 @@ function GridCell({
         style={{ transform: `scale(${contentScale})`, transformOrigin: 'center' }}
       >
         <Users className="h-4 w-4 mb-0.5" />
-        {typeof table.capacita === 'number' && (
-          <span className="text-[11px] font-medium">{table.capacita}</span>
-        )}
+        {typeof table.capacita === 'number' && <span className="text-[11px] font-medium">{table.capacita}</span>}
       </div>
 
       {table.nomePrenotazione && (
