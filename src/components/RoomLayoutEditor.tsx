@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { DndContext, DragEndEvent, DragOverlay, DragStartEvent, useDraggable, useDroppable } from '@dnd-kit/core';
 import { GripVertical, Trash2, Users } from 'lucide-react';
 
@@ -149,11 +149,10 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
   };
 
   /* ======================
-     ✅ Zoom SOLO griglia: slider orizzontale
-     - zoom MINIMO = 1 (1x = FIT: si vede tutta la sala)
-     - zoom non modifica la dimensione della card: viewport a height fissa + scroll interno
-     - chicca: mantiene il punto al centro quando zoommi (lente vera)
+     Zoom “lente” stabile (NO glitch su cambio sala)
      ====================== */
+
+  const layoutKey = `${sala.nome}-${date}-${turno}`; // <-- chiave unica
 
   const gridViewportRef = useRef<HTMLDivElement | null>(null);
 
@@ -166,56 +165,94 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
     return () => mq.removeEventListener?.('change', update);
   }, []);
 
-  // baseCell: dimensione FIT (zoom=1) calcolata sul viewport (che ha height fissa)
-  const [baseCell, setBaseCell] = useState<number>(22);
+  const GAP = 2; // gap-[2px]
+  const PAD = 8; // p-2 wrapper interno
+  const DESKTOP_MAX_VIEWPORT_H = 520;
 
-  // zoom: MIN 1
+  const [viewportH, setViewportH] = useState<number>(DESKTOP_MAX_VIEWPORT_H);
+  const [baseCell, setBaseCell] = useState<number>(22);
   const [zoom, setZoom] = useState(1);
 
   const cellSize = useMemo(() => Math.round(baseCell * zoom), [baseCell, zoom]);
   const contentScale = useMemo(() => clamp(cellSize / 40, 0.45, 1), [cellSize]);
 
-  // Calcolo baseCell su viewport
+  // serve per “mantieni centro”
+  const prevCellSizeRef = useRef<number>(cellSize);
+
+  // ✅ RESET COMPLETO quando cambi sala/date/turno
   useEffect(() => {
+    setZoom(1);
+    setBaseCell(22);
+    setViewportH(DESKTOP_MAX_VIEWPORT_H);
+
+    const el = gridViewportRef.current;
+    if (el) {
+      el.scrollLeft = 0;
+      el.scrollTop = 0;
+    }
+
+    prevCellSizeRef.current = 22; // reset “prev”
+  }, [layoutKey]);
+
+  // ✅ FIT calc stabile (retry se misure 0)
+  useLayoutEffect(() => {
     const el = gridViewportRef.current;
     if (!el) return;
 
-    const GAP = 2; // deve matchare gap-[2px]
-    const PAD = 32; // p-4 (16+16)
+    let raf = 0;
+    let cancelled = false;
 
-    const resize = () => {
+    const compute = () => {
+      if (cancelled) return;
+
       const viewportW = el.clientWidth;
-      const viewportH = el.clientHeight;
+      const viewportHReal = el.clientHeight;
 
-      const availableW = Math.max(1, viewportW - PAD);
-      const availableH = Math.max(1, viewportH - PAD);
+      // layout non pronto -> retry
+      if (!viewportW || (isMobile && !viewportHReal)) {
+        raf = requestAnimationFrame(compute);
+        return;
+      }
 
       const totalGapW = Math.max(0, width - 1) * GAP;
       const totalGapH = Math.max(0, height - 1) * GAP;
 
+      const heightBudget = isMobile ? viewportHReal : DESKTOP_MAX_VIEWPORT_H;
+
+      const availableW = Math.max(1, viewportW - PAD * 2);
+      const availableH = Math.max(1, heightBudget - PAD * 2);
+
       const sizeByW = (availableW - totalGapW) / width;
       const sizeByH = (availableH - totalGapH) / height;
 
-      const next = Math.floor(Math.min(sizeByW, sizeByH));
-      setBaseCell(Math.max(10, next));
+      const nextBase = Math.max(1, Math.floor(Math.min(sizeByW, sizeByH)));
+      setBaseCell(nextBase);
+
+      if (!isMobile) {
+        const gridH1 = height * nextBase + totalGapH + PAD * 2;
+        const nextViewportH = clamp(gridH1, 180, DESKTOP_MAX_VIEWPORT_H);
+        setViewportH(nextViewportH);
+      }
     };
 
-    resize();
-    const ro = new ResizeObserver(resize);
+    compute();
+
+    const ro = new ResizeObserver(() => compute());
     ro.observe(el);
 
-    window.addEventListener('resize', resize);
-    window.addEventListener('orientationchange', resize);
+    window.addEventListener('resize', compute);
+    window.addEventListener('orientationchange', compute);
 
     return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
       ro.disconnect();
-      window.removeEventListener('resize', resize);
-      window.removeEventListener('orientationchange', resize);
+      window.removeEventListener('resize', compute);
+      window.removeEventListener('orientationchange', compute);
     };
-  }, [width, height]);
+  }, [layoutKey, width, height, isMobile]);
 
-  // ✅ Chicca "lente vera": mantiene il centro durante lo zoom (anche quando cambia baseCell)
-  const prevCellSizeRef = useRef<number>(cellSize);
+  // ✅ mantiene il centro durante lo zoom (ma NON quando zoom=1 per evitare drift)
   useEffect(() => {
     const el = gridViewportRef.current;
     if (!el) {
@@ -228,11 +265,15 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
 
     if (prev === next) return;
 
-    // centro attuale in coordinate "non scalate"
+    // se stai tornando al FIT, non “inseguire” il centro
+    if (zoom === 1) {
+      prevCellSizeRef.current = next;
+      return;
+    }
+
     const centerX = (el.scrollLeft + el.clientWidth / 2) / prev;
     const centerY = (el.scrollTop + el.clientHeight / 2) / prev;
 
-    // dopo il render (nuove dimensioni scroll), riposiziona
     requestAnimationFrame(() => {
       const targetLeft = centerX * next - el.clientWidth / 2;
       const targetTop = centerY * next - el.clientHeight / 2;
@@ -245,7 +286,7 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
     });
 
     prevCellSizeRef.current = next;
-  }, [cellSize]);
+  }, [cellSize, zoom]);
 
   /* ======================
      DND handlers
@@ -338,8 +379,7 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            Vai in <span className="font-medium">Impostazioni → Sale → Modifica Zone</span> per definire la mappa della
-            sala.
+            Vai in <span className="font-medium">Impostazioni → Sale → Modifica Zone</span> per definire la mappa della sala.
           </p>
         </CardContent>
       </Card>
@@ -382,35 +422,35 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
 
                 {!canEditTables && (
                   <span className="text-[11px] text-amber-600">
-                    Configurazione non attiva: crea/attiva la configurazione per questa data e turno per posizionare i
-                    tavoli.
+                    Configurazione non attiva: crea/attiva la configurazione per questa data e turno per posizionare i tavoli.
                   </span>
                 )}
               </div>
             </div>
           </CardHeader>
 
-          {/* ✅ viewport a dimensione fissa: la card NON cambia; zoom solo “lente” */}
           <CardContent className="min-w-0">
             <div className="p-4 rounded-lg bg-secondary/30 w-full min-w-0">
               <div className="min-w-0">
                 <div
+                  key={layoutKey} // <-- REMOUNT quando cambi sala/date/turno
                   ref={gridViewportRef}
                   className="rounded-md w-full min-w-0 overflow-auto"
                   style={{
                     WebkitOverflowScrolling: 'touch',
                     touchAction: 'pan-x pan-y',
-                    height: isMobile ? '70vh' : '520px', // <-- fissa: niente resize card quando zoommi
+                    height: isMobile ? '70vh' : `${viewportH}px`,
                   }}
                 >
-                  <div style={{ padding: 2 }}>
+                  {/* a 1x è centrata, a zoom>1 parte dall’alto (più naturale) */}
+                  <div className={cn('w-full h-full p-2', zoom === 1 ? 'flex items-center justify-center' : 'flex items-start justify-center')}>
                     <div
                       className="grid gap-[2px]"
                       style={{
                         gridTemplateColumns: `repeat(${width}, ${cellSize}px)`,
                         gridAutoRows: `${cellSize}px`,
-                        width: width * cellSize + Math.max(0, width - 1) * 2,
-                        height: height * cellSize + Math.max(0, height - 1) * 2,
+                        width: width * cellSize + Math.max(0, width - 1) * GAP,
+                        height: height * cellSize + Math.max(0, height - 1) * GAP,
                       }}
                     >
                       {gridCells.map(({ x, y, tipoZona }) => {
@@ -443,7 +483,6 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
                   </div>
                 </div>
 
-                {/* slider zoom orizzontale sotto (MIN 1x) */}
                 <div className="mt-3 flex items-center gap-3">
                   <span className="text-[11px] text-muted-foreground w-10">1x</span>
 
@@ -603,10 +642,7 @@ function GridCell({ x, y, table, tipoZona, neighbors, onDelete, cellSize, conten
         neighbors?.down && 'border-b-0 rounded-b-none'
       )}
     >
-      <div
-        className="flex flex-col items-center justify-center leading-none"
-        style={{ transform: `scale(${contentScale})`, transformOrigin: 'center' }}
-      >
+      <div className="flex flex-col items-center justify-center leading-none" style={{ transform: `scale(${contentScale})`, transformOrigin: 'center' }}>
         <Users className="h-4 w-4 mb-0.5" />
         {typeof table.capacita === 'number' && <span className="text-[11px] font-medium">{table.capacita}</span>}
       </div>
