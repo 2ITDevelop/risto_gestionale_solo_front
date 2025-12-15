@@ -65,12 +65,7 @@ function getCellTipoZona(zones: ZonaSala[], x: number, y: number): TipoZona | nu
   let foundVivibile = false;
 
   for (const z of zones) {
-    const inside =
-      x >= z.x &&
-      x < z.x + z.base &&
-      y >= z.y &&
-      y < z.y + z.altezza;
-
+    const inside = x >= z.x && x < z.x + z.base && y >= z.y && y < z.y + z.altezza;
     if (!inside) continue;
 
     // Priorità: NON vivibile sopra tutto
@@ -85,6 +80,10 @@ function isTouchActivatorEvent(ev: Event): boolean {
   if (typeof TouchEvent !== 'undefined' && ev instanceof TouchEvent) return true;
   if (typeof PointerEvent !== 'undefined' && ev instanceof PointerEvent) return ev.pointerType === 'touch';
   return false;
+}
+
+function onlyDigits(s: string) {
+  return s.replace(/[^\d]/g, '');
 }
 
 /* ========================
@@ -105,14 +104,36 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
   const [isTouchDrag, setIsTouchDrag] = useState(false);
 
   const initialGrid = useMemo(() => computeGridFromZones(sala.zone || []), [sala.zone]);
+
+  // ✅ numeri “reali”
   const [gridWidth, setGridWidth] = useState<number>(initialGrid.w);
   const [gridHeight, setGridHeight] = useState<number>(initialGrid.h);
 
-  const [newZoneConfig, setNewZoneConfig] = useState<NewZoneConfig>({
-    base: 2,
-    altezza: 2,
-    tipo: 'SPAZIO_VIVIBILE',
-  });
+  // ✅ stringhe per input (mobile friendly)
+  const [gridWidthStr, setGridWidthStr] = useState<string>(String(initialGrid.w));
+  const [gridHeightStr, setGridHeightStr] = useState<string>(String(initialGrid.h));
+
+  // ✅ tipo separato
+  const [newZoneTipo, setNewZoneTipo] = useState<TipoZona>('SPAZIO_VIVIBILE');
+
+  // ✅ base/altezza come stringhe
+  const [newZoneBaseStr, setNewZoneBaseStr] = useState<string>('2');
+  const [newZoneAltStr, setNewZoneAltStr] = useState<string>('2');
+
+  // ✅ config numerica derivata (clampata)
+  const newZoneConfig = useMemo<NewZoneConfig>(() => {
+    const baseNum = Number(newZoneBaseStr);
+    const altNum = Number(newZoneAltStr);
+
+    const base = Math.max(1, Math.min(gridWidth, Number.isFinite(baseNum) ? baseNum : 1));
+    const altezza = Math.max(1, Math.min(gridHeight, Number.isFinite(altNum) ? altNum : 1));
+
+    return {
+      base,
+      altezza,
+      tipo: newZoneTipo,
+    };
+  }, [newZoneBaseStr, newZoneAltStr, gridWidth, gridHeight, newZoneTipo]);
 
   /**
    * ✅ FIX: quando cambia la sala (o quando riapri il dialog),
@@ -127,6 +148,8 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
     const g = computeGridFromZones(nextZones);
     setGridWidth(g.w);
     setGridHeight(g.h);
+    setGridWidthStr(String(g.w));
+    setGridHeightStr(String(g.h));
 
     // opzionale: reset preview drag
     setActiveDrag(null);
@@ -154,7 +177,7 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
     }
   };
 
-  // ✅ resto uguale: hoverCell continua a dipendere da onDragOver (come nel tuo file 1)
+  // ✅ resto uguale: hoverCell continua a dipendere da onDragOver
   const handleDragOver = (e: DragOverEvent) => {
     const over = e.over;
     if (!over) {
@@ -172,7 +195,7 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
     setHoverCell({ x: Number(x), y: Number(y) });
   };
 
-  // ✅ aggiunta: autoscroll durante il drag (solo touch)
+  // ✅ autoscroll durante il drag (solo touch)
   const handleDragMove = (e: DragMoveEvent) => {
     if (!isTouchDrag) return;
 
@@ -256,17 +279,13 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
         ref={dialogScrollRef}
         className={cn(
           'max-w-4xl',
-          // ✅ abilito scroll mobile (necessario per autoscroll)
           'max-h-[85dvh] overflow-y-auto touch-pan-y overscroll-y-contain',
-          // ✅ desktop invariato
           'md:max-h-none md:overflow-visible md:touch-auto'
         )}
       >
         <DialogHeader>
           <DialogTitle>Zone di {sala.nome}</DialogTitle>
-          <DialogDescription>
-            Trascina il rettangolo sulla griglia per creare le zone.
-          </DialogDescription>
+          <DialogDescription>Trascina il rettangolo sulla griglia per creare le zone.</DialogDescription>
         </DialogHeader>
 
         <DndContext
@@ -278,7 +297,6 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
           onDragMove={handleDragMove}
           onDragEnd={handleDragEnd}
           onDragCancel={resetDragState}
-          // ✅ disabilito autoscroll built-in solo su touch (evita conflitti)
           autoScroll={isTouchDrag ? false : undefined}
         >
           <div className="grid lg:grid-cols-[2fr,1fr] gap-6">
@@ -296,15 +314,19 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
                   <div className="space-y-1">
                     <Label className="text-xs">Larghezza</Label>
                     <Input
-                      type="number"
-                      min={3}
-                      max={30}
+                      inputMode="numeric"
+                      type="text"
                       className="h-8 w-20"
-                      value={gridWidth}
-                      onChange={(e) => {
-                        const v = Number(e.target.value);
+                      value={gridWidthStr}
+                      onChange={(e) => setGridWidthStr(onlyDigits(e.target.value))}
+                      onBlur={() => {
+                        const v = Number(gridWidthStr);
                         const clamped = Math.max(3, Math.min(30, Number.isFinite(v) ? v : 3));
                         setGridWidth(clamped);
+                        setGridWidthStr(String(clamped));
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur();
                       }}
                     />
                   </div>
@@ -312,15 +334,19 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
                   <div className="space-y-1">
                     <Label className="text-xs">Altezza</Label>
                     <Input
-                      type="number"
-                      min={3}
-                      max={30}
+                      inputMode="numeric"
+                      type="text"
                       className="h-8 w-20"
-                      value={gridHeight}
-                      onChange={(e) => {
-                        const v = Number(e.target.value);
+                      value={gridHeightStr}
+                      onChange={(e) => setGridHeightStr(onlyDigits(e.target.value))}
+                      onBlur={() => {
+                        const v = Number(gridHeightStr);
                         const clamped = Math.max(3, Math.min(30, Number.isFinite(v) ? v : 3));
                         setGridHeight(clamped);
+                        setGridHeightStr(String(clamped));
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur();
                       }}
                     />
                   </div>
@@ -354,10 +380,8 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
                     <Label className="text-xs">Tipo</Label>
                     <select
                       className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
-                      value={newZoneConfig.tipo}
-                      onChange={(e) =>
-                        setNewZoneConfig((prev) => ({ ...prev, tipo: e.target.value as TipoZona }))
-                      }
+                      value={newZoneTipo}
+                      onChange={(e) => setNewZoneTipo(e.target.value as TipoZona)}
                     >
                       <option value="SPAZIO_VIVIBILE">Spazio vivibile</option>
                       <option value="SPAZIO_NON_VIVIBILE">Spazio non vivibile</option>
@@ -368,25 +392,31 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
                     <Label className="text-xs">Dimensioni (base × altezza)</Label>
                     <div className="flex gap-2">
                       <Input
-                        type="number"
-                        min={1}
-                        max={gridWidth}
-                        value={newZoneConfig.base}
-                        onChange={(e) => {
-                          const v = Number(e.target.value);
-                          const next = Math.max(1, Math.min(gridWidth, Number.isFinite(v) ? v : 1));
-                          setNewZoneConfig((prev) => ({ ...prev, base: next }));
+                        inputMode="numeric"
+                        type="text"
+                        value={newZoneBaseStr}
+                        onChange={(e) => setNewZoneBaseStr(onlyDigits(e.target.value))}
+                        onBlur={() => {
+                          const v = Number(newZoneBaseStr);
+                          const clamped = Math.max(1, Math.min(gridWidth, Number.isFinite(v) ? v : 1));
+                          setNewZoneBaseStr(String(clamped));
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur();
                         }}
                       />
                       <Input
-                        type="number"
-                        min={1}
-                        max={gridHeight}
-                        value={newZoneConfig.altezza}
-                        onChange={(e) => {
-                          const v = Number(e.target.value);
-                          const next = Math.max(1, Math.min(gridHeight, Number.isFinite(v) ? v : 1));
-                          setNewZoneConfig((prev) => ({ ...prev, altezza: next }));
+                        inputMode="numeric"
+                        type="text"
+                        value={newZoneAltStr}
+                        onChange={(e) => setNewZoneAltStr(onlyDigits(e.target.value))}
+                        onBlur={() => {
+                          const v = Number(newZoneAltStr);
+                          const clamped = Math.max(1, Math.min(gridHeight, Number.isFinite(v) ? v : 1));
+                          setNewZoneAltStr(String(clamped));
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur();
                         }}
                       />
                     </div>
@@ -474,9 +504,7 @@ function ZoneCell(props: {
 
   let ghostClass = '';
   if (ghost) {
-    const valid =
-      ghost.anchor.x + ghost.base <= gridWidth &&
-      ghost.anchor.y + ghost.altezza <= gridHeight;
+    const valid = ghost.anchor.x + ghost.base <= gridWidth && ghost.anchor.y + ghost.altezza <= gridHeight;
 
     const inGhost =
       x >= ghost.anchor.x &&
@@ -508,17 +536,18 @@ function ZonePaletteItem({ zone }: { zone: NewZoneConfig }) {
     data: { type: 'new-zone', zone } satisfies DragData,
   });
 
+  // ✅ quando NON stai trascinando: touchAction auto (non rompe input su mobile)
+  // ✅ quando stai trascinando: touchAction none (blocca scroll e “prende” subito il blocco)
   const style: React.CSSProperties | undefined = transform
-  ? {
-      transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
-      touchAction: 'none',
-      userSelect: 'none',
-    }
-  : {
-      touchAction: 'none',
-      userSelect: 'none',
-    };
-
+    ? {
+        transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
+        touchAction: 'none',
+        userSelect: 'none',
+      }
+    : {
+        touchAction: 'auto',
+        userSelect: 'none',
+      };
 
   return (
     <div
