@@ -1,11 +1,13 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   DndContext,
   DragEndEvent,
+  DragMoveEvent,
   DragOverEvent,
   DragStartEvent,
   MeasuringStrategy,
   PointerSensor,
+  TouchSensor,
   rectIntersection,
   useDraggable,
   useDroppable,
@@ -79,6 +81,12 @@ function getCellTipoZona(zones: ZonaSala[], x: number, y: number): TipoZona | nu
   return foundVivibile ? 'SPAZIO_VIVIBILE' : null;
 }
 
+function isTouchActivatorEvent(ev: Event): boolean {
+  if (typeof TouchEvent !== 'undefined' && ev instanceof TouchEvent) return true;
+  if (typeof PointerEvent !== 'undefined' && ev instanceof PointerEvent) return ev.pointerType === 'touch';
+  return false;
+}
+
 /* ========================
    MAIN
    ======================== */
@@ -86,9 +94,15 @@ function getCellTipoZona(zones: ZonaSala[], x: number, y: number): TipoZona | nu
 export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogProps) {
   const updateZones = useUpdateZones();
 
+  // ✅ container scrollabile (mobile) per autoscroll durante drag
+  const dialogScrollRef = useRef<HTMLDivElement | null>(null);
+
   const [zones, setZones] = useState<ZonaSala[]>(sala.zone || []);
   const [activeDrag, setActiveDrag] = useState<NewZoneConfig | null>(null);
   const [hoverCell, setHoverCell] = useState<{ x: number; y: number } | null>(null);
+
+  // ✅ true solo se il drag è partito da touch
+  const [isTouchDrag, setIsTouchDrag] = useState(false);
 
   const initialGrid = useMemo(() => computeGridFromZones(sala.zone || []), [sala.zone]);
   const [gridWidth, setGridWidth] = useState<number>(initialGrid.w);
@@ -117,22 +131,30 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
     // opzionale: reset preview drag
     setActiveDrag(null);
     setHoverCell(null);
+    setIsTouchDrag(false);
   }, [open, sala.nome, sala.zone]);
 
   /* ---------- dnd-kit ---------- */
 
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+  const pointerSensor = useSensor(PointerSensor, { activationConstraint: { distance: 6 } });
+  const touchSensor = useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 10 } });
+  const sensors = useSensors(pointerSensor, touchSensor);
 
   const resetDragState = () => {
     setActiveDrag(null);
     setHoverCell(null);
+    setIsTouchDrag(false);
   };
 
   const handleDragStart = (e: DragStartEvent) => {
     const data = e.active.data.current as DragData | undefined;
-    if (data?.type === 'new-zone') setActiveDrag(data.zone);
+    if (data?.type === 'new-zone') {
+      setActiveDrag(data.zone);
+      setIsTouchDrag(isTouchActivatorEvent(e.activatorEvent));
+    }
   };
 
+  // ✅ resto uguale: hoverCell continua a dipendere da onDragOver (come nel tuo file 1)
   const handleDragOver = (e: DragOverEvent) => {
     const over = e.over;
     if (!over) {
@@ -148,6 +170,36 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
 
     const [, x, y] = id.split('-');
     setHoverCell({ x: Number(x), y: Number(y) });
+  };
+
+  // ✅ aggiunta: autoscroll durante il drag (solo touch)
+  const handleDragMove = (e: DragMoveEvent) => {
+    if (!isTouchDrag) return;
+
+    const container = dialogScrollRef.current;
+    if (!container) return;
+
+    const activeRect = e.active.rect.current.translated;
+    if (!activeRect) return;
+
+    const containerRect = container.getBoundingClientRect();
+
+    const EDGE = 80;
+    const MAX_SPEED = 20;
+
+    const distTop = activeRect.top - containerRect.top;
+    const distBottom = containerRect.bottom - activeRect.bottom;
+
+    let delta = 0;
+    if (distTop < EDGE) {
+      const t = (EDGE - distTop) / EDGE;
+      delta = -Math.ceil(t * MAX_SPEED);
+    } else if (distBottom < EDGE) {
+      const t = (EDGE - distBottom) / EDGE;
+      delta = Math.ceil(t * MAX_SPEED);
+    }
+
+    if (delta !== 0) container.scrollTop += delta;
   };
 
   const handleDragEnd = (e: DragEndEvent) => {
@@ -200,7 +252,16 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl">
+      <DialogContent
+        ref={dialogScrollRef}
+        className={cn(
+          'max-w-4xl',
+          // ✅ abilito scroll mobile (necessario per autoscroll)
+          'max-h-[85dvh] overflow-y-auto touch-pan-y overscroll-y-contain',
+          // ✅ desktop invariato
+          'md:max-h-none md:overflow-visible md:touch-auto'
+        )}
+      >
         <DialogHeader>
           <DialogTitle>Zone di {sala.nome}</DialogTitle>
           <DialogDescription>
@@ -214,8 +275,11 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
           measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
           onDragStart={handleDragStart}
           onDragOver={handleDragOver}
+          onDragMove={handleDragMove}
           onDragEnd={handleDragEnd}
           onDragCancel={resetDragState}
+          // ✅ disabilito autoscroll built-in solo su touch (evita conflitti)
+          autoScroll={isTouchDrag ? false : undefined}
         >
           <div className="grid lg:grid-cols-[2fr,1fr] gap-6">
             {/* GRID */}
