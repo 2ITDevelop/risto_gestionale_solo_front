@@ -95,7 +95,6 @@ function getCellTipoZona(sala: Sala, x: number, y: number): TipoZona | null {
 }
 
 const isCellVivibile = (tipoZona: TipoZona | null) => tipoZona === 'SPAZIO_VIVIBILE';
-
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
 
 /* ======================
@@ -150,9 +149,9 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
   };
 
   /* ======================
-     ✅ Zoom SOLO griglia: slider laterale
-     - baseCell = fit-to-card
-     - cellSize = baseCell * zoom
+     ✅ Zoom SOLO griglia: slider orizzontale
+     - zoom = 0 => FIT (si vede tutta la sala)
+     - cellSize = baseCell * (zoom === 0 ? 1 : zoom)
      ====================== */
 
   const gridViewportRef = useRef<HTMLDivElement | null>(null);
@@ -206,11 +205,11 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
     };
   }, [width, height]);
 
-  const [zoom, setZoom] = useState(1);
+  const [zoom, setZoom] = useState(0); // 0 = fit
+  const effectiveZoom = zoom === 0 ? 1 : zoom;
 
-const effectiveZoom = zoom === 0 ? 1 : zoom; // 0 => fit-to-card
-const cellSize = useMemo(() => Math.round(baseCell * effectiveZoom), [baseCell, effectiveZoom]);
-const contentScale = useMemo(() => clamp(cellSize / 40, 0.45, 1), [cellSize]);
+  const cellSize = useMemo(() => Math.round(baseCell * effectiveZoom), [baseCell, effectiveZoom]);
+  const contentScale = useMemo(() => clamp(cellSize / 40, 0.45, 1), [cellSize]);
 
   /* ======================
      DND handlers
@@ -325,7 +324,9 @@ const contentScale = useMemo(() => clamp(cellSize / 40, 0.45, 1), [cellSize]);
                 <CardTitle>{sala.nome}</CardTitle>
                 <CardDescription>
                   {tables?.length || 0} tavoli · {width}x{height} griglia
-                  <span className="ml-2 text-xs text-muted-foreground">· zoom {zoom.toFixed(2)}x</span>
+                  <span className="ml-2 text-xs text-muted-foreground">
+                    · zoom {zoom === 0 ? 'fit' : `${zoom.toFixed(2)}x`}
+                  </span>
                 </CardDescription>
               </div>
 
@@ -358,90 +359,76 @@ const contentScale = useMemo(() => clamp(cellSize / 40, 0.45, 1), [cellSize]);
           {/* ✅ scroll SOLO qui + slider zoom SOLO qui */}
           <CardContent className="min-w-0">
             <div className="p-4 rounded-lg bg-secondary/30 w-full min-w-0">
-              <div className="flex gap-3 items-stretch min-w-0">
+              <div className="min-w-0">
                 {/* viewport scrollabile */}
-                <div className="flex-1 min-w-0">
-                  <div
-                    ref={gridViewportRef}
-                    className={cn('rounded-md w-full min-w-0', isMobile ? 'overflow-auto' : 'overflow-hidden')}
-                    style={{
-                      WebkitOverflowScrolling: 'touch',
-                      touchAction: 'pan-x pan-y',
-                      maxHeight: isMobile ? '70vh' : undefined,
-                    }}
-                  >
-                    <div style={{ padding: 2 }}>
-                      <div
-                        className="grid gap-[2px]"
-                        style={{
-                          gridTemplateColumns: `repeat(${width}, ${cellSize}px)`,
-                          gridAutoRows: `${cellSize}px`,
-                          width: width * cellSize + Math.max(0, width - 1) * 2,
-                          height: height * cellSize + Math.max(0, height - 1) * 2,
-                        }}
-                      >
-                        {gridCells.map(({ x, y, tipoZona }) => {
-                          const table = getTableAt(x, y);
+                <div
+                  ref={gridViewportRef}
+                  className={cn('rounded-md w-full min-w-0', isMobile ? 'overflow-auto' : 'overflow-hidden')}
+                  style={{
+                    WebkitOverflowScrolling: 'touch',
+                    touchAction: 'pan-x pan-y',
+                    maxHeight: isMobile ? '70vh' : undefined,
+                  }}
+                >
+                  <div style={{ padding: 2 }}>
+                    <div
+                      className="grid gap-[2px]"
+                      style={{
+                        gridTemplateColumns: `repeat(${width}, ${cellSize}px)`,
+                        gridAutoRows: `${cellSize}px`,
+                        width: width * cellSize + Math.max(0, width - 1) * 2,
+                        height: height * cellSize + Math.max(0, height - 1) * 2,
+                      }}
+                    >
+                      {gridCells.map(({ x, y, tipoZona }) => {
+                        const table = getTableAt(x, y);
 
-                          const neighbors = table
-                            ? {
-                                left: !!getTableAt(x - 1, y),
-                                right: !!getTableAt(x + 1, y),
-                                up: !!getTableAt(x, y - 1),
-                                down: !!getTableAt(x, y + 1),
-                              }
-                            : undefined;
+                        const neighbors = table
+                          ? {
+                              left: !!getTableAt(x - 1, y),
+                              right: !!getTableAt(x + 1, y),
+                              up: !!getTableAt(x, y - 1),
+                              down: !!getTableAt(x, y + 1),
+                            }
+                          : undefined;
 
-                          return (
-                            <GridCell
-                              key={`${x}-${y}`}
-                              x={x}
-                              y={y}
-                              table={table}
-                              tipoZona={tipoZona}
-                              neighbors={neighbors}
-                              onDelete={() => setDeleteTarget({ x, y })}
-                              cellSize={cellSize}
-                              contentScale={contentScale}
-                            />
-                          );
-                        })}
-                      </div>
+                        return (
+                          <GridCell
+                            key={`${x}-${y}`}
+                            x={x}
+                            y={y}
+                            table={table}
+                            tipoZona={tipoZona}
+                            neighbors={neighbors}
+                            onDelete={() => setDeleteTarget({ x, y })}
+                            cellSize={cellSize}
+                            contentScale={contentScale}
+                          />
+                        );
+                      })}
                     </div>
                   </div>
                 </div>
 
-                {/* leva zoom orizzontale (tutta nella card) */}
-<div className="mt-3 flex items-center gap-3">
-  <span className="text-[11px] text-muted-foreground w-10">fit</span>
+                {/* slider zoom orizzontale sotto */}
+                <div className="mt-3 flex items-center gap-3">
+                  <span className="text-[11px] text-muted-foreground w-10">fit</span>
 
-  <Slider
-    value={[zoom]}
-    min={0}
-    max={3.5}
-    step={0.05}
-    onValueChange={(v) => setZoom(v[0] ?? 0)}
-    className="flex-1"
-  />
+                  <Slider
+                    value={[zoom]}
+                    min={0}
+                    max={3.5}
+                    step={0.05}
+                    onValueChange={(v) => setZoom(v[0] ?? 0)}
+                    className="flex-1"
+                  />
 
-  <span className="text-[11px] text-muted-foreground w-10 text-right">3.5x</span>
-
-  <button
-    type="button"
-    className="ml-2 text-[11px] text-muted-foreground hover:text-foreground"
-    onClick={() => setZoom(0)}
-  >
-    reset
-  </button>
-</div>
-
-
-                  <span className="text-[11px] text-muted-foreground">−</span>
+                  <span className="text-[11px] text-muted-foreground w-10 text-right">3.5x</span>
 
                   <button
                     type="button"
-                    className="mt-2 text-[11px] text-muted-foreground hover:text-foreground"
-                    onClick={() => setZoom(1)}
+                    className="ml-2 text-[11px] text-muted-foreground hover:text-foreground"
+                    onClick={() => setZoom(0)}
                   >
                     reset
                   </button>
