@@ -536,8 +536,7 @@ function ZonePaletteItem({ zone }: { zone: NewZoneConfig }) {
     data: { type: 'new-zone', zone } satisfies DragData,
   });
 
-  // ✅ quando NON stai trascinando: touchAction auto (non rompe input su mobile)
-  // ✅ quando stai trascinando: touchAction none (blocca scroll e “prende” subito il blocco)
+  // ✅ movimento identico al file "sopra": quando tocchi il blocco, lo scroll si ferma e lo prendi subito
   const style: React.CSSProperties | undefined = transform
     ? {
         transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
@@ -545,7 +544,7 @@ function ZonePaletteItem({ zone }: { zone: NewZoneConfig }) {
         userSelect: 'none',
       }
     : {
-        touchAction: 'auto',
+        touchAction: 'none',
         userSelect: 'none',
       };
 
@@ -561,6 +560,7 @@ function ZonePaletteItem({ zone }: { zone: NewZoneConfig }) {
     </div>
   );
 }
+
 
 function ZoneRectPreview({ base, altezza, tipo }: NewZoneConfig) {
   const max = Math.max(base, altezza, 1);
