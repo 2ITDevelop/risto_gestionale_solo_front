@@ -184,16 +184,18 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
   const el = gridContainerRef.current;
   if (!el) return;
 
-  const GAP = 2; // matcha gap-[2px]
+  const GAP = 2;
 
   const resize = () => {
-    // misure reali interne del container
-    const cs = getComputedStyle(el);
-    const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
-    const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+    // spazio totale visibile del viewport
+    const viewportW = el.clientWidth;
+    const viewportH = el.clientHeight;
 
-    const availableW = Math.max(1, el.clientWidth - padX);
-    const availableH = Math.max(1, el.clientHeight - padY);
+    // padding interno reale (p-4 sta nel child, quindi qui mettiamo un margine fisso)
+    const PAD = 32; // 16px per lato (p-4)
+
+    const availableW = Math.max(1, viewportW - PAD);
+    const availableH = Math.max(1, viewportH - PAD);
 
     const totalGapW = Math.max(0, width - 1) * GAP;
     const totalGapH = Math.max(0, height - 1) * GAP;
@@ -201,17 +203,28 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
     const sizeByW = (availableW - totalGapW) / width;
     const sizeByH = (availableH - totalGapH) / height;
 
-    // ✅ deve stare dentro sia in larghezza che in altezza
-    const next = Math.floor(Math.min(sizeByW, sizeByH)) - 1; // -1 evita overflow per arrotondamenti
+    // -1 per evitare che 1px di rounding causi overflow su mobile
+    const next = Math.floor(Math.min(sizeByW, sizeByH)) - 1;
 
     setCellSize(Math.max(2, next));
   };
 
   resize();
+
   const ro = new ResizeObserver(resize);
   ro.observe(el);
-  return () => ro.disconnect();
+
+  // ✅ mobile: ricalcola anche su orientation change e quando cambia la viewport
+  window.addEventListener('orientationchange', resize);
+  window.addEventListener('resize', resize);
+
+  return () => {
+    ro.disconnect();
+    window.removeEventListener('orientationchange', resize);
+    window.removeEventListener('resize', resize);
+  };
 }, [width, height]);
+
 
 
 
@@ -374,50 +387,49 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
 
           {/* ✅ Fit-to-screen reale: cambiano le dimensioni delle celle */}
           <CardContent className="min-w-0">
-            <div
-  ref={gridContainerRef}
-  className={cn(
-    "p-4 rounded-lg bg-secondary/30 w-full min-w-0",
-    "h-[70vh] md:h-[75vh]",   // ✅ altezza misurabile (fondamentale)
-    "overflow-hidden",        // ✅ non deve uscire
-    "flex items-center justify-center" // ✅ centra il layout che ora entra sempre
-  )}
->
+  <div
+    ref={gridContainerRef}
+    className={cn(
+      "rounded-lg bg-secondary/30 w-full min-w-0",
+      "h-[70dvh] md:h-[75vh]",   // ✅ dvh su mobile
+      "overflow-hidden"
+    )}
+  >
+    <div className="p-4 w-full h-full">
+      <div className="w-full h-full flex items-center justify-center">
+        <div
+          className="grid gap-[2px]"
+          style={{ gridTemplateColumns: `repeat(${width}, ${cellSize}px)` }}
+        >
+          {gridCells.map(({ x, y, tipoZona }) => {
+            const table = getTableAt(x, y);
+            const neighbors = table
+              ? {
+                  left: !!getTableAt(x - 1, y),
+                  right: !!getTableAt(x + 1, y),
+                  up: !!getTableAt(x, y - 1),
+                  down: !!getTableAt(x, y + 1),
+                }
+              : undefined;
 
+            return (
+              <GridCell
+                key={`${x}-${y}`}
+                x={x}
+                y={y}
+                table={table}
+                tipoZona={tipoZona}
+                neighbors={neighbors}
+                onDelete={() => setDeleteTarget({ x, y })}
+              />
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  </div>
+</CardContent>
 
-              <div
-                className="grid gap-[2px]"
-                style={{
-                  gridTemplateColumns: `repeat(${width}, ${cellSize}px)`,
-                }}
-              >
-                {gridCells.map(({ x, y, tipoZona }) => {
-                  const table = getTableAt(x, y);
-
-                  const neighbors = table
-                    ? {
-                        left: !!getTableAt(x - 1, y),
-                        right: !!getTableAt(x + 1, y),
-                        up: !!getTableAt(x, y - 1),
-                        down: !!getTableAt(x, y + 1),
-                      }
-                    : undefined;
-
-                  return (
-                    <GridCell
-                      key={`${x}-${y}`}
-                      x={x}
-                      y={y}
-                      table={table}
-                      tipoZona={tipoZona}
-                      neighbors={neighbors}
-                      onDelete={() => setDeleteTarget({ x, y })}
-                    />
-                  );
-                })}
-              </div>
-            </div>
-          </CardContent>
         </Card>
 
         {/* Sidebar */}
