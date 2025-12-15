@@ -150,8 +150,9 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
 
   /* ======================
      ✅ Zoom SOLO griglia: slider orizzontale
-     - zoom = 0 => FIT (si vede tutta la sala)
-     - cellSize = baseCell * (zoom === 0 ? 1 : zoom)
+     - zoom MINIMO = 1 (1x = FIT: si vede tutta la sala)
+     - zoom non modifica la dimensione della card: viewport a height fissa + scroll interno
+     - chicca: mantiene il punto al centro quando zoommi (lente vera)
      ====================== */
 
   const gridViewportRef = useRef<HTMLDivElement | null>(null);
@@ -165,8 +166,16 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
     return () => mq.removeEventListener?.('change', update);
   }, []);
 
+  // baseCell: dimensione FIT (zoom=1) calcolata sul viewport (che ha height fissa)
   const [baseCell, setBaseCell] = useState<number>(22);
 
+  // zoom: MIN 1
+  const [zoom, setZoom] = useState(1);
+
+  const cellSize = useMemo(() => Math.round(baseCell * zoom), [baseCell, zoom]);
+  const contentScale = useMemo(() => clamp(cellSize / 40, 0.45, 1), [cellSize]);
+
+  // Calcolo baseCell su viewport
   useEffect(() => {
     const el = gridViewportRef.current;
     if (!el) return;
@@ -205,11 +214,38 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
     };
   }, [width, height]);
 
-  const [zoom, setZoom] = useState(0); // 0 = fit
-  const effectiveZoom = zoom === 0 ? 1 : zoom;
+  // ✅ Chicca "lente vera": mantiene il centro durante lo zoom (anche quando cambia baseCell)
+  const prevCellSizeRef = useRef<number>(cellSize);
+  useEffect(() => {
+    const el = gridViewportRef.current;
+    if (!el) {
+      prevCellSizeRef.current = cellSize;
+      return;
+    }
 
-  const cellSize = useMemo(() => Math.round(baseCell * effectiveZoom), [baseCell, effectiveZoom]);
-  const contentScale = useMemo(() => clamp(cellSize / 40, 0.45, 1), [cellSize]);
+    const prev = prevCellSizeRef.current;
+    const next = cellSize;
+
+    if (prev === next) return;
+
+    // centro attuale in coordinate "non scalate"
+    const centerX = (el.scrollLeft + el.clientWidth / 2) / prev;
+    const centerY = (el.scrollTop + el.clientHeight / 2) / prev;
+
+    // dopo il render (nuove dimensioni scroll), riposiziona
+    requestAnimationFrame(() => {
+      const targetLeft = centerX * next - el.clientWidth / 2;
+      const targetTop = centerY * next - el.clientHeight / 2;
+
+      const maxLeft = Math.max(0, el.scrollWidth - el.clientWidth);
+      const maxTop = Math.max(0, el.scrollHeight - el.clientHeight);
+
+      el.scrollLeft = clamp(targetLeft, 0, maxLeft);
+      el.scrollTop = clamp(targetTop, 0, maxTop);
+    });
+
+    prevCellSizeRef.current = next;
+  }, [cellSize]);
 
   /* ======================
      DND handlers
@@ -324,9 +360,7 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
                 <CardTitle>{sala.nome}</CardTitle>
                 <CardDescription>
                   {tables?.length || 0} tavoli · {width}x{height} griglia
-                  <span className="ml-2 text-xs text-muted-foreground">
-                    · zoom {zoom === 0 ? 'fit' : `${zoom.toFixed(2)}x`}
-                  </span>
+                  <span className="ml-2 text-xs text-muted-foreground">· zoom {zoom.toFixed(2)}x</span>
                 </CardDescription>
               </div>
 
@@ -356,18 +390,17 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
             </div>
           </CardHeader>
 
-          {/* ✅ scroll SOLO qui + slider zoom SOLO qui */}
+          {/* ✅ viewport a dimensione fissa: la card NON cambia; zoom solo “lente” */}
           <CardContent className="min-w-0">
             <div className="p-4 rounded-lg bg-secondary/30 w-full min-w-0">
               <div className="min-w-0">
-                {/* viewport scrollabile */}
                 <div
                   ref={gridViewportRef}
-                  className={cn('rounded-md w-full min-w-0', isMobile ? 'overflow-auto' : 'overflow-hidden')}
+                  className="rounded-md w-full min-w-0 overflow-auto"
                   style={{
                     WebkitOverflowScrolling: 'touch',
                     touchAction: 'pan-x pan-y',
-                    maxHeight: isMobile ? '70vh' : undefined,
+                    height: isMobile ? '70vh' : '520px', // <-- fissa: niente resize card quando zoommi
                   }}
                 >
                   <div style={{ padding: 2 }}>
@@ -410,16 +443,16 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
                   </div>
                 </div>
 
-                {/* slider zoom orizzontale sotto */}
+                {/* slider zoom orizzontale sotto (MIN 1x) */}
                 <div className="mt-3 flex items-center gap-3">
-                  <span className="text-[11px] text-muted-foreground w-10">fit</span>
+                  <span className="text-[11px] text-muted-foreground w-10">1x</span>
 
                   <Slider
                     value={[zoom]}
-                    min={0}
+                    min={1}
                     max={3.5}
                     step={0.05}
-                    onValueChange={(v) => setZoom(v[0] ?? 0)}
+                    onValueChange={(v) => setZoom(v[0] ?? 1)}
                     className="flex-1"
                   />
 
@@ -428,7 +461,7 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
                   <button
                     type="button"
                     className="ml-2 text-[11px] text-muted-foreground hover:text-foreground"
-                    onClick={() => setZoom(0)}
+                    onClick={() => setZoom(1)}
                   >
                     reset
                   </button>
