@@ -181,39 +181,33 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
   const [cellSize, setCellSize] = useState<number>(40);
 
   useEffect(() => {
-    const el = gridContainerRef.current;
-    if (!el) return;
+  const el = gridContainerRef.current;
+  if (!el) return;
 
-    const resize = () => {
-      const rect = el.getBoundingClientRect();
+  const GAP = 2;      // matcha gap-[2px]
+  const PADDING = 32; // p-4 = 16px per lato
 
-      // spazio reale disponibile (tolgo un filo per padding/bordi)
-      const availableW = Math.max(1, rect.width - 8);
-      const availableH = Math.max(1, rect.height - 8);
+  const resize = () => {
+    const rect = el.getBoundingClientRect();
 
-      // gap reale (matcha gap-[2px])
-      const gap = 2;
+    // larghezza realmente disponibile dentro la card
+    const availableW = Math.max(1, rect.width - PADDING);
 
-      // spazio occupato dai gap
-      const totalGapW = Math.max(0, width - 1) * gap;
-      const totalGapH = Math.max(0, height - 1) * gap;
+    // gap totali tra colonne
+    const totalGapW = Math.max(0, width - 1) * GAP;
 
-      // dimensione cella massima per stare dentro (sia in larghezza che in altezza)
-      const sizeByWidth = (availableW - totalGapW) / width;
-      const sizeByHeight = (availableH - totalGapH) / height;
+    // ✅ dimensione cella in base alle colonne
+    const next = Math.floor((availableW - totalGapW) / width);
 
-      const next = Math.floor(Math.min(sizeByWidth, sizeByHeight));
+    setCellSize(Math.max(3, next));
+  };
 
-      // clamp: minimo 4px per “esistere”, massimo 70px per non esplodere su sale piccole
-      setCellSize(Math.max(4, Math.min(70, Number.isFinite(next) ? next : 40)));
-    };
+  resize();
+  const ro = new ResizeObserver(resize);
+  ro.observe(el);
+  return () => ro.disconnect();
+}, [width]);
 
-    resize();
-
-    const ro = new ResizeObserver(resize);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [width, height]);
 
   /* ======================
      DND handlers
@@ -376,13 +370,9 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
           <CardContent className="min-w-0">
             <div
               ref={gridContainerRef}
-              className={cn(
-                'p-4 rounded-lg bg-secondary/30 w-full min-w-0 overflow-hidden',
-                // su mobile diamo un'altezza “viewport-like” per far stare anche sale alte (100 righe)
-                'h-[70vh] sm:h-[75vh] md:h-auto',
-                'flex items-center justify-center'
-              )}
+              className="p-4 rounded-lg bg-secondary/30 w-full min-w-0"
             >
+
               <div
                 className="grid gap-[2px]"
                 style={{
