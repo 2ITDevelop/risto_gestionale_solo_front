@@ -184,29 +184,35 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
   const el = gridContainerRef.current;
   if (!el) return;
 
-  const GAP = 2;      // matcha gap-[2px]
-  const PADDING = 32; // p-4 = 16px per lato
+  const GAP = 2; // matcha gap-[2px]
 
   const resize = () => {
-    const rect = el.getBoundingClientRect();
+    // misure reali interne del container
+    const cs = getComputedStyle(el);
+    const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+    const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
 
-    // larghezza realmente disponibile dentro la card
-    const availableW = Math.max(1, rect.width - PADDING);
+    const availableW = Math.max(1, el.clientWidth - padX);
+    const availableH = Math.max(1, el.clientHeight - padY);
 
-    // gap totali tra colonne
     const totalGapW = Math.max(0, width - 1) * GAP;
+    const totalGapH = Math.max(0, height - 1) * GAP;
 
-    // ✅ dimensione cella in base alle colonne
-    const next = Math.floor((availableW - totalGapW) / width);
+    const sizeByW = (availableW - totalGapW) / width;
+    const sizeByH = (availableH - totalGapH) / height;
 
-    setCellSize(Math.max(3, next));
+    // ✅ deve stare dentro sia in larghezza che in altezza
+    const next = Math.floor(Math.min(sizeByW, sizeByH)) - 1; // -1 evita overflow per arrotondamenti
+
+    setCellSize(Math.max(2, next));
   };
 
   resize();
   const ro = new ResizeObserver(resize);
   ro.observe(el);
   return () => ro.disconnect();
-}, [width]);
+}, [width, height]);
+
 
 
   /* ======================
@@ -369,9 +375,15 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
           {/* ✅ Fit-to-screen reale: cambiano le dimensioni delle celle */}
           <CardContent className="min-w-0">
             <div
-              ref={gridContainerRef}
-              className="p-4 rounded-lg bg-secondary/30 w-full min-w-0"
-            >
+  ref={gridContainerRef}
+  className={cn(
+    "p-4 rounded-lg bg-secondary/30 w-full min-w-0",
+    "h-[70vh] md:h-[75vh]",   // ✅ altezza misurabile (fondamentale)
+    "overflow-hidden",        // ✅ non deve uscire
+    "flex items-center justify-center" // ✅ centra il layout che ora entra sempre
+  )}
+>
+
 
               <div
                 className="grid gap-[2px]"
