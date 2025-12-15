@@ -122,6 +122,9 @@ interface RoomLayoutEditorProps {
 export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayoutEditorProps) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ x: number; y: number } | null>(null);
+  const pinchRafRef = useRef<number | null>(null);
+  const pinchPendingZoomRef = useRef<number | null>(null);
+
 
   const {
     data: tables,
@@ -208,10 +211,10 @@ const handleTouchStartPinch = (e: React.TouchEvent<HTMLDivElement>) => {
 
 const handleTouchMovePinch = (e: React.TouchEvent<HTMLDivElement>) => {
   if (activeId) return;
+
   if (e.touches.length !== 2) return;
   if (pinchStartDistRef.current == null) return;
 
-  // pinch = gesture intenzionale
   e.preventDefault();
 
   const d = dist2(e.touches[0], e.touches[1]);
@@ -219,12 +222,33 @@ const handleTouchMovePinch = (e: React.TouchEvent<HTMLDivElement>) => {
   if (startD <= 0) return;
 
   const scale = d / startD;
-  setZoom(clampZoom(pinchStartZoomRef.current * scale));
+  const nextZoom = clampZoom(pinchStartZoomRef.current * scale);
+
+  // ✅ aggiorna al massimo 1 volta per frame
+  pinchPendingZoomRef.current = nextZoom;
+
+  if (pinchRafRef.current == null) {
+    pinchRafRef.current = requestAnimationFrame(() => {
+      const z = pinchPendingZoomRef.current;
+      if (z != null) setZoom(z);
+      pinchRafRef.current = null;
+    });
+  }
 };
 
+
 const handleTouchEndPinch = (e: React.TouchEvent<HTMLDivElement>) => {
-  if (e.touches.length < 2) pinchStartDistRef.current = null;
+  if (e.touches.length < 2) {
+    pinchStartDistRef.current = null;
+    pinchPendingZoomRef.current = null;
+
+    if (pinchRafRef.current != null) {
+      cancelAnimationFrame(pinchRafRef.current);
+      pinchRafRef.current = null;
+    }
+  }
 };
+
 
 
 
