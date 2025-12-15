@@ -509,8 +509,16 @@ function ZonePaletteItem({ zone }: { zone: NewZoneConfig }) {
   });
 
   const style: React.CSSProperties | undefined = transform
-    ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` }
-    : undefined;
+  ? {
+      transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
+      touchAction: 'none',
+      userSelect: 'none',
+    }
+  : {
+      touchAction: 'none',
+      userSelect: 'none',
+    };
+
 
   return (
     <div
