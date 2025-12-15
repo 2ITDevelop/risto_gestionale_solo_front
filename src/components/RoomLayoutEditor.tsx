@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   DndContext,
   DragEndEvent,
@@ -167,6 +167,83 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
   };
 
   /* ======================
+     ✅ PINCH ZOOM SOLO MOBILE
+     ====================== */
+
+  const gridViewportRef = useRef<HTMLDivElement | null>(null);
+
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia('(pointer: coarse)');
+    const update = () => setIsMobile(mq.matches);
+    update();
+    mq.addEventListener?.('change', update);
+    return () => mq.removeEventListener?.('change', update);
+  }, []);
+
+  const [zoom, setZoom] = useState(1);
+
+  const pinchRef = useRef<{
+    startDist: number;
+    startZoom: number;
+    pinching: boolean;
+  } | null>(null);
+
+  const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
+  const touchDist = (t1: Touch, t2: Touch) => {
+    const dx = t1.clientX - t2.clientX;
+    const dy = t1.clientY - t2.clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  };
+
+  useEffect(() => {
+  if (!isMobile) return;
+
+  const el = gridViewportRef.current;
+  if (!el) return;
+
+  const onTouchStart: EventListener = (ev) => {
+    const e = ev as TouchEvent;
+    if (e.touches.length !== 2) return;
+
+    const d = touchDist(e.touches[0], e.touches[1]);
+    pinchRef.current = { startDist: d, startZoom: zoom, pinching: true };
+  };
+
+  const onTouchMove: EventListener = (ev) => {
+    const e = ev as TouchEvent;
+    if (!pinchRef.current?.pinching) return;
+    if (e.touches.length !== 2) return;
+
+    e.preventDefault();
+
+    const d = touchDist(e.touches[0], e.touches[1]);
+    const ratio = d / pinchRef.current.startDist;
+
+    const next = clamp(pinchRef.current.startZoom * ratio, 1, 3.5);
+    setZoom(next);
+  };
+
+  const onTouchEnd: EventListener = () => {
+    if (!pinchRef.current) return;
+    pinchRef.current.pinching = false;
+  };
+
+  el.addEventListener('touchstart', onTouchStart, { passive: true });
+  el.addEventListener('touchmove', onTouchMove, { passive: false });
+  el.addEventListener('touchend', onTouchEnd, { passive: true });
+  el.addEventListener('touchcancel', onTouchEnd, { passive: true });
+
+  return () => {
+    el.removeEventListener('touchstart', onTouchStart);
+    el.removeEventListener('touchmove', onTouchMove);
+    el.removeEventListener('touchend', onTouchEnd);
+    el.removeEventListener('touchcancel', onTouchEnd);
+  };
+}, [isMobile, zoom]);
+
+
+  /* ======================
      DND handlers
      ====================== */
 
@@ -317,38 +394,60 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
             </div>
           </CardHeader>
 
-          {/* ✅ come EditZonesDialog: la griglia si adatta allo schermo, celle quadrate */}
+          {/* ✅ griglia responsive + pinch zoom solo mobile */}
           <CardContent className="min-w-0">
-            <div className="p-4 rounded-lg bg-secondary/30 w-full min-w-0 overflow-hidden">
-              <div className="-mx-1 px-1 w-full min-w-0">
+            <div
+              className={cn(
+                'p-4 rounded-lg bg-secondary/30 w-full min-w-0',
+                isMobile ? 'overflow-auto touch-pan-x touch-pan-y' : 'overflow-hidden'
+              )}
+              style={{ WebkitOverflowScrolling: 'touch' }}
+            >
+              <div
+                ref={gridViewportRef}
+                className={cn('-mx-1 px-1 w-full min-w-0', !isMobile && 'flex justify-center')}
+                style={{
+                  // ✅ fondamentale: permette scroll 1 dito + pinch 2 dita (preventDefault solo su 2 touches)
+                  touchAction: 'pan-x pan-y',
+                }}
+              >
+                {/* spacer scrollabile quando zoom > 1 */}
                 <div
-                  className="grid gap-[2px] w-full min-w-0"
-                  style={{ gridTemplateColumns: `repeat(${width}, minmax(0, 1fr))` }}
+                  style={{
+                    width: isMobile ? `${100 * zoom}%` : '100%',
+                    transform: isMobile ? `scale(${zoom})` : undefined,
+                    transformOrigin: 'top left',
+                  }}
                 >
-                  {gridCells.map(({ x, y, tipoZona }) => {
-                    const table = getTableAt(x, y);
+                  <div
+                    className="grid gap-[2px] w-full min-w-0"
+                    style={{ gridTemplateColumns: `repeat(${width}, minmax(0, 1fr))` }}
+                  >
+                    {gridCells.map(({ x, y, tipoZona }) => {
+                      const table = getTableAt(x, y);
 
-                    const neighbors = table
-                      ? {
-                          left: !!getTableAt(x - 1, y),
-                          right: !!getTableAt(x + 1, y),
-                          up: !!getTableAt(x, y - 1),
-                          down: !!getTableAt(x, y + 1),
-                        }
-                      : undefined;
+                      const neighbors = table
+                        ? {
+                            left: !!getTableAt(x - 1, y),
+                            right: !!getTableAt(x + 1, y),
+                            up: !!getTableAt(x, y - 1),
+                            down: !!getTableAt(x, y + 1),
+                          }
+                        : undefined;
 
-                    return (
-                      <GridCell
-                        key={`${x}-${y}`}
-                        x={x}
-                        y={y}
-                        table={table}
-                        tipoZona={tipoZona}
-                        neighbors={neighbors}
-                        onDelete={() => setDeleteTarget({ x, y })}
-                      />
-                    );
-                  })}
+                      return (
+                        <GridCell
+                          key={`${x}-${y}`}
+                          x={x}
+                          y={y}
+                          table={table}
+                          tipoZona={tipoZona}
+                          neighbors={neighbors}
+                          onDelete={() => setDeleteTarget({ x, y })}
+                        />
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
             </div>
@@ -470,7 +569,7 @@ function GridCell({ x, y, table, tipoZona, neighbors, onDelete }: GridCellProps)
     );
   }
 
-  // TAVOLO (droppable per prenotazioni)
+  // TAVOLO
   return (
     <div
       ref={setNodeRef}
@@ -487,13 +586,9 @@ function GridCell({ x, y, table, tipoZona, neighbors, onDelete }: GridCellProps)
         neighbors?.down && 'border-b-0 rounded-b-none'
       )}
     >
-      {/* ⚠️ su griglie enormi, l’icona può “spingere”: rendila responsive */}
       <Users className="h-3 w-3 sm:h-4 sm:w-4 mb-0.5" />
-
       {typeof table.capacita === 'number' && (
-        <span className="text-[10px] sm:text-[11px] font-medium leading-none">
-          {table.capacita}
-        </span>
+        <span className="text-[10px] sm:text-[11px] font-medium leading-none">{table.capacita}</span>
       )}
 
       {table.nomePrenotazione && (
