@@ -1,5 +1,16 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { DndContext, DragEndEvent, DragOverlay, DragStartEvent, useDraggable, useDroppable } from '@dnd-kit/core';
+import {
+  DndContext,
+  DragEndEvent,
+  DragOverlay,
+  DragStartEvent,
+  useDraggable,
+  useDroppable,
+  PointerSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
 import { GripVertical, Trash2, Users } from 'lucide-react';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -246,6 +257,22 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
   }, [cellSize, width, height]);
 
   /* ======================
+     ✅ FIX MOBILE: sensors per evitare conflitto scroll vs drag
+     (scroll rimane attivo, il drag parte con una micro "pressione")
+     ====================== */
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 6 },
+    }),
+    useSensor(TouchSensor, {
+      // su smartphone: evita che lo swipe venga "rubato" dal drag
+      // e rende il drag affidabile quando premi intenzionalmente
+      activationConstraint: { delay: 180, tolerance: 8 },
+    })
+  );
+
+  /* ======================
      DND handlers
      ====================== */
 
@@ -349,7 +376,7 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
      ====================== */
 
   return (
-    <DndContext onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+    <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
       <div className="grid lg:grid-cols-[1fr,300px] gap-6">
         <Card className="glass-card min-w-0">
           <CardHeader className="pb-3">
@@ -397,7 +424,7 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
                   className="rounded-md w-full min-w-0 overflow-auto"
                   style={{
                     WebkitOverflowScrolling: 'touch',
-                    touchAction: 'pan-x pan-y',
+                    touchAction: 'pan-x pan-y', // ✅ rimane UGUALE
                     height: `${viewportH}px`,
                   }}
                 >
@@ -452,14 +479,7 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
                 <div className="mt-3 flex items-center gap-3">
                   <span className="text-[11px] text-muted-foreground w-10">0.5x</span>
 
-                  <Slider
-  value={[zoom]}
-  min={0.5}
-  max={3.5}
-  step={0.05}
-  onValueChange={(v) => setZoom(v[0] ?? 1)}
-/>
-
+                  <Slider value={[zoom]} min={0.5} max={3.5} step={0.05} onValueChange={(v) => setZoom(v[0] ?? 1)} />
 
                   <span className="text-[11px] text-muted-foreground w-10 text-right">3.5x</span>
 
