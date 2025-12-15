@@ -14,12 +14,7 @@ import { StatusDot } from '@/components/StatusBadge';
 import { PageLoader } from '@/components/LoadingSpinner';
 import { ErrorDisplay } from '@/components/ErrorDisplay';
 
-import {
-  useAssignReservation,
-  useCreateTables,
-  useDeleteTable,
-  useTables,
-} from '@/hooks/use-sala';
+import { useAssignReservation, useCreateTables, useDeleteTable, useTables } from '@/hooks/use-sala';
 import { useReservationsByDate } from '@/hooks/use-reservations';
 
 import type { Reservation, Sala, TableStatus, Tavolo, TipoZona, Turno } from '@/types';
@@ -118,9 +113,6 @@ interface RoomLayoutEditorProps {
   canEditTables: boolean;
 }
 
-// Tip per eventi gesture Safari iOS
-type SafariGestureEvent = Event & { scale: number };
-
 export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayoutEditorProps) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ x: number; y: number } | null>(null);
@@ -162,11 +154,12 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
   };
 
   /* ======================
-     ✅ PINCH ZOOM SOLO MOBILE (Safari iOS PWA friendly)
+     ✅ Zoom SOLO griglia: pinch mobile + scroll solo nella card
+     - zoom = moltiplicatore celle
+     - cellSize = baseCell * zoom
      ====================== */
 
   const gridViewportRef = useRef<HTMLDivElement | null>(null);
-  const zoomTargetRef = useRef<HTMLDivElement | null>(null);
 
   const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {
@@ -177,6 +170,48 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
     return () => mq.removeEventListener?.('change', update);
   }, []);
 
+  // baseCell: dimensione “fit” (in px) calcolata sul viewport della card
+  const [baseCell, setBaseCell] = useState<number>(22);
+
+  useEffect(() => {
+    const el = gridViewportRef.current;
+    if (!el) return;
+
+    const GAP = 2; // deve matchare gap-[2px]
+    const PAD = 32; // p-4 (16+16)
+
+    const resize = () => {
+      const viewportW = el.clientWidth;
+      const viewportH = el.clientHeight;
+
+      const availableW = Math.max(1, viewportW - PAD);
+      const availableH = Math.max(1, viewportH - PAD);
+
+      const totalGapW = Math.max(0, width - 1) * GAP;
+      const totalGapH = Math.max(0, height - 1) * GAP;
+
+      const sizeByW = (availableW - totalGapW) / width;
+      const sizeByH = (availableH - totalGapH) / height;
+
+      // fit-to-card
+      const next = Math.floor(Math.min(sizeByW, sizeByH));
+      setBaseCell(Math.max(10, next)); // minimo sensato
+    };
+
+    resize();
+    const ro = new ResizeObserver(resize);
+    ro.observe(el);
+
+    window.addEventListener('resize', resize);
+    window.addEventListener('orientationchange', resize);
+
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', resize);
+      window.removeEventListener('orientationchange', resize);
+    };
+  }, [width, height]);
+
   const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
 
   const [zoom, setZoom] = useState(1);
@@ -185,41 +220,58 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
     zoomRef.current = zoom;
   }, [zoom]);
 
-  useEffect(() => {
+  // Pinch via Pointer Events (PWA iOS friendly)
+  const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pinchStartRef = useRef<{ dist: number; zoom: number } | null>(null);
+
+  const cellSize = useMemo(() => Math.round(baseCell * zoom), [baseCell, zoom]);
+  const contentScale = useMemo(() => clamp(cellSize / 40, 0.45, 1), [cellSize]);
+
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!isMobile) return;
+    if (e.pointerType !== 'touch') return;
 
-    const el = gridViewportRef.current;
-    if (!el) return;
+    // cattura per avere move anche se “scappa”
+    e.currentTarget.setPointerCapture?.(e.pointerId);
 
-    // iOS Safari gesture events (molto più affidabili di touch* in PWA)
-    const onGestureStart = (e: Event) => {
-      e.preventDefault();
-    };
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
-    const onGestureChange = (e: Event) => {
-      const ge = e as SafariGestureEvent;
-      e.preventDefault();
+    if (pointersRef.current.size === 2) {
+      const pts = Array.from(pointersRef.current.values());
+      const dx = pts[0].x - pts[1].x;
+      const dy = pts[0].y - pts[1].y;
+      pinchStartRef.current = { dist: Math.hypot(dx, dy), zoom: zoomRef.current };
+    }
+  };
 
-      // ge.scale è relativo al gesto (≈1 all’inizio)
-      const next = clamp(zoomRef.current * ge.scale, 1, 3.5);
-      setZoom(next);
-    };
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isMobile) return;
+    if (e.pointerType !== 'touch') return;
 
-    const onGestureEnd = (e: Event) => {
-      e.preventDefault();
-      // lo zoom resta così com’è
-    };
+    if (!pointersRef.current.has(e.pointerId)) return;
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
-    el.addEventListener('gesturestart', onGestureStart, { passive: false });
-    el.addEventListener('gesturechange', onGestureChange, { passive: false });
-    el.addEventListener('gestureend', onGestureEnd, { passive: false });
+    if (pointersRef.current.size !== 2) return;
+    if (!pinchStartRef.current) return;
 
-    return () => {
-      el.removeEventListener('gesturestart', onGestureStart);
-      el.removeEventListener('gesturechange', onGestureChange);
-      el.removeEventListener('gestureend', onGestureEnd);
-    };
-  }, [isMobile]);
+    const pts = Array.from(pointersRef.current.values());
+    const dx = pts[0].x - pts[1].x;
+    const dy = pts[0].y - pts[1].y;
+    const dist = Math.hypot(dx, dy);
+
+    const ratio = dist / pinchStartRef.current.dist;
+    const nextZoom = clamp(pinchStartRef.current.zoom * ratio, 1, 3.5);
+
+    // niente preventDefault qui: lasciamo che lo scroll rimanga 1 dito.
+    setZoom(nextZoom);
+  };
+
+  const endPointer = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.pointerType !== 'touch') return;
+
+    pointersRef.current.delete(e.pointerId);
+    if (pointersRef.current.size < 2) pinchStartRef.current = null;
+  };
 
   /* ======================
      DND handlers
@@ -232,7 +284,6 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
 
   const handleDragEnd = (event: DragEndEvent) => {
     setActiveId(null);
-
     if (!canEditTables) return;
 
     const { active, over } = event;
@@ -242,7 +293,6 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
     const dragData = active.data.current as DragData | undefined;
     if (!dragData) return;
 
-    // Prenotazione -> Tavolo
     if (dragData.type === 'reservation' && overId.startsWith('table-')) {
       const [, xStr, yStr] = overId.split('-');
       const x = Number(xStr);
@@ -259,7 +309,6 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
       return;
     }
 
-    // Nuovo tavolo -> Cella
     if (dragData.type === 'new-table' && overId.startsWith('cell-')) {
       const [, xStr, yStr] = overId.split('-');
       const x = Number(xStr);
@@ -310,14 +359,12 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
         <CardHeader>
           <CardTitle>{sala.nome}</CardTitle>
           <CardDescription>
-            Nessuna zona definita per questa sala. Configura le zone nelle impostazioni prima di
-            aggiungere tavoli.
+            Nessuna zona definita per questa sala. Configura le zone nelle impostazioni prima di aggiungere tavoli.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            Vai in <span className="font-medium">Impostazioni → Sale → Modifica Zone</span> per
-            definire la mappa della sala.
+            Vai in <span className="font-medium">Impostazioni → Sale → Modifica Zone</span> per definire la mappa della sala.
           </p>
         </CardContent>
       </Card>
@@ -338,7 +385,11 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
                 <CardTitle>{sala.nome}</CardTitle>
                 <CardDescription>
                   {tables?.length || 0} tavoli · {width}x{height} griglia
-                  {isMobile && <span className="ml-2 text-xs text-muted-foreground">· zoom {zoom.toFixed(2)}x</span>}
+                  {isMobile && (
+                    <span className="ml-2 text-xs text-muted-foreground">
+                      · zoom {zoom.toFixed(2)}x
+                    </span>
+                  )}
                 </CardDescription>
               </div>
 
@@ -360,44 +411,44 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
 
                 {!canEditTables && (
                   <span className="text-[11px] text-amber-600">
-                    Configurazione non attiva: crea/attiva la configurazione per questa data e turno
-                    per posizionare i tavoli.
+                    Configurazione non attiva: crea/attiva la configurazione per questa data e turno per posizionare i tavoli.
                   </span>
                 )}
               </div>
             </div>
           </CardHeader>
 
+          {/* ✅ scroll SOLO qui + pinch SOLO qui */}
           <CardContent className="min-w-0">
-            <div
-              ref={gridViewportRef}
-              className={cn(
-                'p-4 rounded-lg bg-secondary/30 w-full min-w-0',
-                isMobile ? 'overflow-auto' : 'overflow-hidden'
-              )}
-              style={{
-                WebkitOverflowScrolling: 'touch',
-                touchAction: 'pan-x pan-y',
-              }}
-            >
-              {/* “spazio scrollabile” quando zoom > 1 */}
+            <div className="p-4 rounded-lg bg-secondary/30 w-full min-w-0">
               <div
-                className="-mx-1 px-1 min-w-0"
+                ref={gridViewportRef}
+                className={cn(
+                  'rounded-md w-full min-w-0',
+                  // su mobile: scroll interno
+                  isMobile ? 'overflow-auto' : 'overflow-hidden'
+                )}
                 style={{
-                  width: isMobile ? `${100 * zoom}%` : '100%',
-                  height: isMobile ? `${100 * zoom}%` : 'auto',
+                  WebkitOverflowScrolling: 'touch',
+                  // importante: scroll 1 dito, pinch 2 dita (noi gestiamo pinch con pointer events)
+                  touchAction: 'pan-x pan-y',
+                  maxHeight: isMobile ? '70vh' : undefined, // se vuoi evitare che “scappi” fuori
                 }}
+                onPointerDown={onPointerDown}
+                onPointerMove={onPointerMove}
+                onPointerUp={endPointer}
+                onPointerCancel={endPointer}
               >
-                <div
-                  ref={zoomTargetRef}
-                  style={{
-                    transform: isMobile ? `scale(${zoom})` : undefined,
-                    transformOrigin: 'top left',
-                  }}
-                >
+                {/* questo wrapper crea area scrollabile quando zoom > 1 */}
+                <div style={{ padding: 2 }}>
                   <div
-                    className="grid gap-[2px] w-full min-w-0"
-                    style={{ gridTemplateColumns: `repeat(${width}, minmax(0, 1fr))` }}
+                    className="grid gap-[2px]"
+                    style={{
+                      gridTemplateColumns: `repeat(${width}, ${cellSize}px)`,
+                      gridAutoRows: `${cellSize}px`,
+                      width: width * cellSize + Math.max(0, width - 1) * 2,
+                      height: height * cellSize + Math.max(0, height - 1) * 2,
+                    }}
                   >
                     {gridCells.map(({ x, y, tipoZona }) => {
                       const table = getTableAt(x, y);
@@ -420,6 +471,8 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
                           tipoZona={tipoZona}
                           neighbors={neighbors}
                           onDelete={() => setDeleteTarget({ x, y })}
+                          cellSize={cellSize}
+                          contentScale={contentScale}
                         />
                       );
                     })}
@@ -520,9 +573,20 @@ interface GridCellProps {
   tipoZona: TipoZona | null;
   neighbors?: CellNeighbors;
   onDelete: () => void;
+  cellSize: number;
+  contentScale: number;
 }
 
-function GridCell({ x, y, table, tipoZona, neighbors, onDelete }: GridCellProps) {
+function GridCell({
+  x,
+  y,
+  table,
+  tipoZona,
+  neighbors,
+  onDelete,
+  cellSize,
+  contentScale,
+}: GridCellProps) {
   const isVivibile = tipoZona === 'SPAZIO_VIVIBILE';
 
   const { setNodeRef, isOver } = useDroppable({
@@ -530,12 +594,15 @@ function GridCell({ x, y, table, tipoZona, neighbors, onDelete }: GridCellProps)
     disabled: !table && !isVivibile,
   });
 
+  const style: React.CSSProperties = { width: cellSize, height: cellSize };
+
   if (!table) {
     return (
       <div
         ref={setNodeRef}
+        style={style}
         className={cn(
-          'aspect-square rounded-[4px] border transition-colors',
+          'rounded-[4px] border transition-colors',
           isVivibile && 'grid-cell',
           !isVivibile && 'bg-[#d8c8b1] opacity-70 border-[#b8a994] cursor-not-allowed',
           isOver && isVivibile && 'grid-cell-active'
@@ -547,8 +614,9 @@ function GridCell({ x, y, table, tipoZona, neighbors, onDelete }: GridCellProps)
   return (
     <div
       ref={setNodeRef}
+      style={style}
       className={cn(
-        'relative aspect-square p-1 flex flex-col items-center justify-center transition-all overflow-hidden',
+        'relative p-1 flex items-center justify-center transition-all overflow-hidden',
         'border-2',
         table.stato === 'LIBERO' && 'bg-status-free/20 border-status-free',
         table.stato === 'RISERVATO' && 'bg-status-reserved/20 border-status-reserved',
@@ -560,15 +628,18 @@ function GridCell({ x, y, table, tipoZona, neighbors, onDelete }: GridCellProps)
         neighbors?.down && 'border-b-0 rounded-b-none'
       )}
     >
-      <Users className="h-3 w-3 sm:h-4 sm:w-4 mb-0.5" />
-      {typeof table.capacita === 'number' && (
-        <span className="text-[10px] sm:text-[11px] font-medium leading-none">
-          {table.capacita}
-        </span>
-      )}
+      <div
+        className="flex flex-col items-center justify-center leading-none"
+        style={{ transform: `scale(${contentScale})`, transformOrigin: 'center' }}
+      >
+        <Users className="h-4 w-4 mb-0.5" />
+        {typeof table.capacita === 'number' && (
+          <span className="text-[11px] font-medium">{table.capacita}</span>
+        )}
+      </div>
 
       {table.nomePrenotazione && (
-        <span className="absolute bottom-0.5 text-[9px] sm:text-[10px] font-medium truncate max-w-full px-1">
+        <span className="absolute bottom-0.5 text-[10px] font-medium truncate max-w-full px-1">
           {table.nomePrenotazione}
         </span>
       )}
