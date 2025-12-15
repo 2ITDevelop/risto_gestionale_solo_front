@@ -268,7 +268,7 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
     useSensor(TouchSensor, {
       // su smartphone: evita che lo swipe venga "rubato" dal drag
       // e rende il drag affidabile quando premi intenzionalmente
-      activationConstraint: { delay: 180, tolerance: 8 },
+      activationConstraint: { delay: 320, tolerance: 4 },
     })
   );
 
@@ -660,17 +660,24 @@ function TablePaletteItem({ capacity, disabled }: { capacity: number; disabled?:
   });
 
   return (
-    <div
-      ref={setNodeRef}
-      {...(!disabled ? listeners : {})}
-      {...(!disabled ? attributes : {})}
-      className={cn(
-        'flex items-center gap-3 p-3 rounded-lg bg-secondary/50',
-        disabled ? 'cursor-not-allowed opacity-50' : 'cursor-grab hover:bg-secondary',
-        'transition-colors',
-        isDragging && 'opacity-50'
-      )}
-    >
+  <div
+    ref={setNodeRef}
+    {...(!disabled ? listeners : {})}
+    {...(!disabled ? attributes : {})}
+    style={{
+      touchAction: 'none',          // ✅ fondamentale: stabilizza dnd su touch
+      WebkitUserSelect: 'none',
+      userSelect: 'none',
+      WebkitTouchCallout: 'none',
+    }}
+    className={cn(
+      'flex items-center gap-3 p-3 rounded-lg bg-secondary/50',
+      disabled ? 'cursor-not-allowed opacity-50' : 'cursor-grab hover:bg-secondary',
+      'transition-colors',
+      isDragging && 'opacity-50'
+    )}
+  >
+
       <GripVertical className="h-4 w-4 text-muted-foreground" />
       <div className="w-8 h-8 rounded-md bg-primary/10 flex items-center justify-center">
         <Users className="h-4 w-4 text-primary" />
@@ -687,16 +694,23 @@ function DraggableReservation({ reservation }: { reservation: UILayoutReservatio
   });
 
   return (
-    <div
-      ref={setNodeRef}
-      {...listeners}
-      {...attributes}
-      className={cn(
-        'flex items-center gap-3 p-3 rounded-lg bg-secondary/50 cursor-grab',
-        'hover:bg-secondary transition-colors',
-        isDragging && 'opacity-50'
-      )}
-    >
+  <div
+    ref={setNodeRef}
+    {...listeners}
+    {...attributes}
+    style={{
+      touchAction: 'none',          // ✅ stabilizza anche qui
+      WebkitUserSelect: 'none',
+      userSelect: 'none',
+      WebkitTouchCallout: 'none',
+    }}
+    className={cn(
+      'flex items-center gap-3 p-3 rounded-lg bg-secondary/50 cursor-grab',
+      'hover:bg-secondary transition-colors',
+      isDragging && 'opacity-50'
+    )}
+  >
+
       <GripVertical className="h-4 w-4 text-muted-foreground" />
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium truncate">{reservation.nome}</p>
