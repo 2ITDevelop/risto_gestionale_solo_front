@@ -44,7 +44,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 
-const CELL_SIZE = 55;
+
 
 /* ======================
    Tipi FE
@@ -329,38 +329,41 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
           </CardHeader>
 
           <CardContent>
-            <div className="p-4 rounded-lg bg-secondary/30 flex justify-center">
-              <div
-                className="grid gap-[2px]"
-                style={{ gridTemplateColumns: `repeat(${width}, ${CELL_SIZE}px)` }}
-              >
-                {gridCells.map(({ x, y, tipoZona }) => {
-                  const table = getTableAt(x, y);
+  <div className="p-4 rounded-lg bg-secondary/30 flex justify-center">
+    <div className="-mx-1 px-1 w-full min-w-0">
+      <div
+        className="grid gap-[2px] w-full min-w-0"
+        style={{ gridTemplateColumns: `repeat(${width}, minmax(0, 1fr))` }}
+      >
+        {gridCells.map(({ x, y, tipoZona }) => {
+          const table = getTableAt(x, y);
 
-                  const neighbors = table
-                    ? {
-                        left: !!getTableAt(x - 1, y),
-                        right: !!getTableAt(x + 1, y),
-                        up: !!getTableAt(x, y - 1),
-                        down: !!getTableAt(x, y + 1),
-                      }
-                    : undefined;
+          const neighbors = table
+            ? {
+                left: !!getTableAt(x - 1, y),
+                right: !!getTableAt(x + 1, y),
+                up: !!getTableAt(x, y - 1),
+                down: !!getTableAt(x, y + 1),
+              }
+            : undefined;
 
-                  return (
-                    <GridCell
-                      key={`${x}-${y}`}
-                      x={x}
-                      y={y}
-                      table={table}
-                      tipoZona={tipoZona}
-                      neighbors={neighbors}
-                      onDelete={() => setDeleteTarget({ x, y })}
-                    />
-                  );
-                })}
-              </div>
-            </div>
-          </CardContent>
+          return (
+            <GridCell
+              key={`${x}-${y}`}
+              x={x}
+              y={y}
+              table={table}
+              tipoZona={tipoZona}
+              neighbors={neighbors}
+              onDelete={() => setDeleteTarget({ x, y })}
+            />
+          );
+        })}
+      </div>
+    </div>
+  </div>
+</CardContent>
+
         </Card>
 
         {/* Sidebar */}
