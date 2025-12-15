@@ -149,7 +149,7 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
   };
 
   /* ======================
-     ✅ Zoom reale + FIT a 1x (tutta la sala entra) + scroll mobile OK
+     ✅ Zoom reale + FIT 1x + scroll mobile non limitato
      ====================== */
 
   const layoutKey = `${sala.nome}-${date}-${turno}`;
@@ -164,8 +164,8 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
     return () => mq.removeEventListener?.('change', update);
   }, []);
 
-  const GAP = 2; // gap-[2px]
-  const PAD = 12; // bordo interno “abbondante” per evitare glitch
+  const GAP = 2;
+  const PAD = 12;
   const DESKTOP_VIEWPORT_H = 520;
 
   const [zoom, setZoom] = useState(1);
@@ -177,10 +177,10 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
     return clamp(vh, 280, 720);
   }, [isMobile]);
 
-  // ✅ ZOOM REALE (NON usare transform sulla griglia)
+  // ✅ ZOOM REALE (NO transform sulla griglia)
   const cellSize = useMemo(() => Math.round(baseCell * zoom), [baseCell, zoom]);
 
-  // scala solo l’icona/testo per non farli diventare enormi
+  // scala solo l’icona/testo
   const contentScale = useMemo(() => clamp(cellSize / 40, 0.45, 1), [cellSize]);
 
   // reset “hard” su cambio sala/date/turno
@@ -207,7 +207,6 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
       const w = el.clientWidth;
       const h = viewportH;
 
-      // layout non pronto -> retry
       if (!w || !h) {
         raf = requestAnimationFrame(computeFit);
         return;
@@ -223,7 +222,6 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
       const byH = (availH - totalGapH) / height;
 
       const next = Math.max(1, Math.floor(Math.min(byW, byH)));
-
       setBaseCell((prev) => (prev === next ? prev : next));
     };
 
@@ -239,6 +237,13 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
       window.removeEventListener('orientationchange', computeFit);
     };
   }, [layoutKey, width, height, viewportH]);
+
+  // ✅ Workaround iOS: forza ricalcolo area scrollabile quando cambia la dimensione reale
+  useLayoutEffect(() => {
+    const el = gridViewportRef.current;
+    if (!el) return;
+    void el.offsetHeight; // force reflow
+  }, [cellSize, width, height]);
 
   /* ======================
      DND handlers
@@ -383,9 +388,9 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
             </div>
           </CardHeader>
 
-          <CardContent className="min-w-0">
-            <div className="p-4 rounded-lg bg-secondary/30 w-full min-w-0">
-              <div className="min-w-0">
+          <CardContent className="min-w-0 min-h-0">
+            <div className="p-4 rounded-lg bg-secondary/30 w-full min-w-0 min-h-0">
+              <div className="min-w-0 min-h-0">
                 <div
                   key={layoutKey}
                   ref={gridViewportRef}
@@ -396,13 +401,14 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
                     height: `${viewportH}px`,
                   }}
                 >
-                  {/* ✅ FIX mobile: niente h-full, altrimenti lo scroll può “fermarsi” */}
+                  {/* ✅ wrapper neutro: niente flex, altrimenti su iOS può “limitare” lo scroll */}
                   <div
-                    className={cn(
-                      'w-full',
-                      zoom === 1 ? 'flex items-center justify-center' : 'flex items-start justify-center'
-                    )}
-                    style={{ padding: PAD }}
+                    style={{
+                      padding: PAD,
+                      width: 'max-content',
+                      height: 'max-content',
+                      margin: '0 auto', // centra orizzontalmente
+                    }}
                   >
                     <div
                       className="grid gap-[2px]"
