@@ -170,6 +170,7 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
      ✅ PINCH ZOOM SOLO MOBILE
      ====================== */
 
+  // ref sul contenitore scrollabile (quello con overflow)
   const gridViewportRef = useRef<HTMLDivElement | null>(null);
 
   const [isMobile, setIsMobile] = useState(false);
@@ -182,6 +183,10 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
   }, []);
 
   const [zoom, setZoom] = useState(1);
+  const zoomRef = useRef(1);
+  useEffect(() => {
+    zoomRef.current = zoom;
+  }, [zoom]);
 
   const pinchRef = useRef<{
     startDist: number;
@@ -189,59 +194,61 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
     pinching: boolean;
   } | null>(null);
 
-  const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
-  const touchDist = (t1: Touch, t2: Touch) => {
-    const dx = t1.clientX - t2.clientX;
-    const dy = t1.clientY - t2.clientY;
-    return Math.sqrt(dx * dx + dy * dy);
-  };
-
   useEffect(() => {
-  if (!isMobile) return;
+    if (!isMobile) return;
 
-  const el = gridViewportRef.current;
-  if (!el) return;
+    const el = gridViewportRef.current;
+    if (!el) return;
 
-  const onTouchStart: EventListener = (ev) => {
-    const e = ev as TouchEvent;
-    if (e.touches.length !== 2) return;
+    const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
 
-    const d = touchDist(e.touches[0], e.touches[1]);
-    pinchRef.current = { startDist: d, startZoom: zoom, pinching: true };
-  };
+    const touchDist = (t1: Touch, t2: Touch) => {
+      const dx = t1.clientX - t2.clientX;
+      const dy = t1.clientY - t2.clientY;
+      return Math.hypot(dx, dy);
+    };
 
-  const onTouchMove: EventListener = (ev) => {
-    const e = ev as TouchEvent;
-    if (!pinchRef.current?.pinching) return;
-    if (e.touches.length !== 2) return;
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length !== 2) return;
 
-    e.preventDefault();
+      // fondamentale su iOS per bloccare lo zoom "nativo" della pagina e gestire il nostro
+      e.preventDefault();
 
-    const d = touchDist(e.touches[0], e.touches[1]);
-    const ratio = d / pinchRef.current.startDist;
+      const d = touchDist(e.touches[0], e.touches[1]);
+      pinchRef.current = { startDist: d, startZoom: zoomRef.current, pinching: true };
+    };
 
-    const next = clamp(pinchRef.current.startZoom * ratio, 1, 3.5);
-    setZoom(next);
-  };
+    const onTouchMove = (e: TouchEvent) => {
+      if (!pinchRef.current?.pinching) return;
+      if (e.touches.length !== 2) return;
 
-  const onTouchEnd: EventListener = () => {
-    if (!pinchRef.current) return;
-    pinchRef.current.pinching = false;
-  };
+      e.preventDefault();
 
-  el.addEventListener('touchstart', onTouchStart, { passive: true });
-  el.addEventListener('touchmove', onTouchMove, { passive: false });
-  el.addEventListener('touchend', onTouchEnd, { passive: true });
-  el.addEventListener('touchcancel', onTouchEnd, { passive: true });
+      const d = touchDist(e.touches[0], e.touches[1]);
+      const ratio = d / pinchRef.current.startDist;
 
-  return () => {
-    el.removeEventListener('touchstart', onTouchStart);
-    el.removeEventListener('touchmove', onTouchMove);
-    el.removeEventListener('touchend', onTouchEnd);
-    el.removeEventListener('touchcancel', onTouchEnd);
-  };
-}, [isMobile, zoom]);
+      const next = clamp(pinchRef.current.startZoom * ratio, 1, 3.5);
+      setZoom(next);
+    };
 
+    const onTouchEnd = () => {
+      if (!pinchRef.current) return;
+      pinchRef.current.pinching = false;
+    };
+
+    // passive: false su start/move altrimenti preventDefault non ha effetto
+    el.addEventListener('touchstart', onTouchStart, { passive: false });
+    el.addEventListener('touchmove', onTouchMove, { passive: false });
+    el.addEventListener('touchend', onTouchEnd, { passive: true });
+    el.addEventListener('touchcancel', onTouchEnd, { passive: true });
+
+    return () => {
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+      el.removeEventListener('touchend', onTouchEnd);
+      el.removeEventListener('touchcancel', onTouchEnd);
+    };
+  }, [isMobile]);
 
   /* ======================
      DND handlers
@@ -397,24 +404,19 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
           {/* ✅ griglia responsive + pinch zoom solo mobile */}
           <CardContent className="min-w-0">
             <div
+              ref={gridViewportRef}
               className={cn(
                 'p-4 rounded-lg bg-secondary/30 w-full min-w-0',
-                isMobile ? 'overflow-auto touch-pan-x touch-pan-y' : 'overflow-hidden'
+                isMobile ? 'overflow-auto' : 'overflow-hidden'
               )}
-              style={{ WebkitOverflowScrolling: 'touch' }}
+              style={{
+                WebkitOverflowScrolling: 'touch',
+                touchAction: 'pan-x pan-y',
+              }}
             >
-              <div
-                ref={gridViewportRef}
-                className={cn('-mx-1 px-1 w-full min-w-0', !isMobile && 'flex justify-center')}
-                style={{
-                  // ✅ fondamentale: permette scroll 1 dito + pinch 2 dita (preventDefault solo su 2 touches)
-                  touchAction: 'pan-x pan-y',
-                }}
-              >
-                {/* spacer scrollabile quando zoom > 1 */}
+              <div className={cn('-mx-1 px-1 w-full min-w-0', !isMobile && 'flex justify-center')}>
                 <div
                   style={{
-                    width: isMobile ? `${100 * zoom}%` : '100%',
                     transform: isMobile ? `scale(${zoom})` : undefined,
                     transformOrigin: 'top left',
                   }}
@@ -588,7 +590,9 @@ function GridCell({ x, y, table, tipoZona, neighbors, onDelete }: GridCellProps)
     >
       <Users className="h-3 w-3 sm:h-4 sm:w-4 mb-0.5" />
       {typeof table.capacita === 'number' && (
-        <span className="text-[10px] sm:text-[11px] font-medium leading-none">{table.capacita}</span>
+        <span className="text-[10px] sm:text-[11px] font-medium leading-none">
+          {table.capacita}
+        </span>
       )}
 
       {table.nomePrenotazione && (
