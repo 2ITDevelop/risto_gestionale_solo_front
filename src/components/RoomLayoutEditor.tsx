@@ -79,9 +79,7 @@ type DragData = DragDataReservation | DragDataNewTable;
    ====================== */
 
 function getSalaSize(sala: Sala): { width: number; height: number } {
-  if (!sala.zone || sala.zone.length === 0) {
-    return { width: 8, height: 6 };
-  }
+  if (!sala.zone || sala.zone.length === 0) return { width: 8, height: 6 };
 
   let maxX = 0;
   let maxY = 0;
@@ -94,23 +92,12 @@ function getSalaSize(sala: Sala): { width: number; height: number } {
   return { width: maxX, height: maxY };
 }
 
-/**
- * PRIORITÀ:
- * - se una cella ricade in una zona NON_VIVIBILE -> NON_VIVIBILE
- * - altrimenti se ricade in una VIVIBILE -> VIVIBILE
- * - altrimenti null (fuori zone)
- */
 function getCellTipoZona(sala: Sala, x: number, y: number): TipoZona | null {
   const zones = sala.zone ?? [];
   let foundVivibile = false;
 
   for (const z of zones) {
-    const inside =
-      x >= z.x &&
-      x < z.x + z.base &&
-      y >= z.y &&
-      y < z.y + z.altezza;
-
+    const inside = x >= z.x && x < z.x + z.base && y >= z.y && y < z.y + z.altezza;
     if (!inside) continue;
 
     if (z.tipo === 'SPAZIO_NON_VIVIBILE') return 'SPAZIO_NON_VIVIBILE';
@@ -174,59 +161,61 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
   };
 
   /* ======================
-     FIT-TO-SCREEN (celle dinamiche)
+     FIT-TO-SCREEN (celle dinamiche) ✅
      ====================== */
 
   const gridContainerRef = useRef<HTMLDivElement | null>(null);
   const [cellSize, setCellSize] = useState<number>(40);
 
+  // scala contenuti (icone/testi) quando la cella diventa piccola, altrimenti sfora
+  const contentScale = useMemo(() => {
+    // 40px = “dimensione comoda”; sotto scala progressivamente fino a 0.45
+    const s = cellSize / 40;
+    return Math.max(0.45, Math.min(1, s));
+  }, [cellSize]);
+
   useEffect(() => {
-  const el = gridContainerRef.current;
-  if (!el) return;
+    const el = gridContainerRef.current;
+    if (!el) return;
 
-  const GAP = 2;
+    const GAP = 2;
 
-  const resize = () => {
-    // spazio totale visibile del viewport
-    const viewportW = el.clientWidth;
-    const viewportH = el.clientHeight;
+    const resize = () => {
+      const viewportW = el.clientWidth;
+      const viewportH = el.clientHeight;
 
-    // padding interno reale (p-4 sta nel child, quindi qui mettiamo un margine fisso)
-    const PAD = 32; // 16px per lato (p-4)
+      // questo padding è del wrapper interno p-4 (16+16)
+      const PAD = 32;
 
-    const availableW = Math.max(1, viewportW - PAD);
-    const availableH = Math.max(1, viewportH - PAD);
+      const availableW = Math.max(1, viewportW - PAD);
+      const availableH = Math.max(1, viewportH - PAD);
 
-    const totalGapW = Math.max(0, width - 1) * GAP;
-    const totalGapH = Math.max(0, height - 1) * GAP;
+      const totalGapW = Math.max(0, width - 1) * GAP;
+      const totalGapH = Math.max(0, height - 1) * GAP;
 
-    const sizeByW = (availableW - totalGapW) / width;
-    const sizeByH = (availableH - totalGapH) / height;
+      const sizeByW = (availableW - totalGapW) / width;
+      const sizeByH = (availableH - totalGapH) / height;
 
-    // -1 per evitare che 1px di rounding causi overflow su mobile
-    const next = Math.floor(Math.min(sizeByW, sizeByH)) - 1;
+      // ✅ deve entrare sia in larghezza che in altezza
+      const next = Math.floor(Math.min(sizeByW, sizeByH)) - 1;
 
-    setCellSize(Math.max(2, next));
-  };
+      setCellSize(Math.max(2, next));
+    };
 
-  resize();
+    resize();
 
-  const ro = new ResizeObserver(resize);
-  ro.observe(el);
+    const ro = new ResizeObserver(resize);
+    ro.observe(el);
 
-  // ✅ mobile: ricalcola anche su orientation change e quando cambia la viewport
-  window.addEventListener('orientationchange', resize);
-  window.addEventListener('resize', resize);
+    window.addEventListener('orientationchange', resize);
+    window.addEventListener('resize', resize);
 
-  return () => {
-    ro.disconnect();
-    window.removeEventListener('orientationchange', resize);
-    window.removeEventListener('resize', resize);
-  };
-}, [width, height]);
-
-
-
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('orientationchange', resize);
+      window.removeEventListener('resize', resize);
+    };
+  }, [width, height]);
 
   /* ======================
      DND handlers
@@ -275,22 +264,16 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
       const y = Number(yStr);
 
       const cell = gridCells.find((c) => c.x === x && c.y === y);
-      if (!cell || !isCellVivibile(cell.tipoZona)) return; // ✅ SOLO vivibile
+      if (!cell || !isCellVivibile(cell.tipoZona)) return;
 
       const existingTable = getTableAt(x, y);
       if (existingTable) return;
-
-      const capacity = dragData.capacity ?? 2;
 
       createTables.mutate({
         nomeSala: sala.nome,
         date,
         turno,
-        table: {
-          x,
-          y,
-          stato: 'LIBERO' as TableStatus,
-        },
+        table: { x, y, stato: 'LIBERO' as TableStatus },
       });
 
       return;
@@ -377,64 +360,67 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
 
                 {!canEditTables && (
                   <span className="text-[11px] text-amber-600">
-                    Configurazione non attiva: crea/attiva la configurazione per questa data e
-                    turno per posizionare i tavoli.
+                    Configurazione non attiva: crea/attiva la configurazione per questa data e turno
+                    per posizionare i tavoli.
                   </span>
                 )}
               </div>
             </div>
           </CardHeader>
 
-          {/* ✅ Fit-to-screen reale: cambiano le dimensioni delle celle */}
+          {/* ✅ Fit-to-screen reale: anche le CELLE + CONTENUTI si ridimensionano */}
           <CardContent className="min-w-0">
-  <div
-    ref={gridContainerRef}
-    className={cn(
-      "rounded-lg bg-secondary/30 w-full min-w-0",
-      "h-[70dvh] md:h-[75vh]",   // ✅ dvh su mobile
-      "overflow-hidden"
-    )}
-  >
-    <div className="p-4 w-full h-full">
-      <div className="w-full h-full flex items-center justify-center">
-        <div
-          className="grid gap-[2px]"
-          style={{ gridTemplateColumns: `repeat(${width}, ${cellSize}px)` }}
-        >
-          {gridCells.map(({ x, y, tipoZona }) => {
-            const table = getTableAt(x, y);
-            const neighbors = table
-              ? {
-                  left: !!getTableAt(x - 1, y),
-                  right: !!getTableAt(x + 1, y),
-                  up: !!getTableAt(x, y - 1),
-                  down: !!getTableAt(x, y + 1),
-                }
-              : undefined;
+            <div
+              ref={gridContainerRef}
+              className={cn(
+                'rounded-lg bg-secondary/30 w-full min-w-0',
+                'h-[70dvh] md:h-[75vh]',
+                'overflow-hidden'
+              )}
+            >
+              <div className="p-4 w-full h-full">
+                <div className="w-full h-full flex items-center justify-center">
+                  <div
+                    className="grid gap-[2px]"
+                    style={{
+                      gridTemplateColumns: `repeat(${width}, ${cellSize}px)`,
+                    }}
+                  >
+                    {gridCells.map(({ x, y, tipoZona }) => {
+                      const table = getTableAt(x, y);
 
-            return (
-              <GridCell
-                key={`${x}-${y}`}
-                x={x}
-                y={y}
-                table={table}
-                tipoZona={tipoZona}
-                neighbors={neighbors}
-                onDelete={() => setDeleteTarget({ x, y })}
-              />
-            );
-          })}
-        </div>
-      </div>
-    </div>
-  </div>
-</CardContent>
+                      const neighbors = table
+                        ? {
+                            left: !!getTableAt(x - 1, y),
+                            right: !!getTableAt(x + 1, y),
+                            up: !!getTableAt(x, y - 1),
+                            down: !!getTableAt(x, y + 1),
+                          }
+                        : undefined;
 
+                      return (
+                        <GridCell
+                          key={`${x}-${y}`}
+                          x={x}
+                          y={y}
+                          table={table}
+                          tipoZona={tipoZona}
+                          neighbors={neighbors}
+                          onDelete={() => setDeleteTarget({ x, y })}
+                          cellSize={cellSize}
+                          contentScale={contentScale}
+                        />
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </CardContent>
         </Card>
 
         {/* Sidebar */}
         <div className="space-y-4">
-          {/* Table Palette */}
           <Card className="glass-card">
             <CardHeader className="pb-3">
               <CardTitle className="text-base">Nuovo Tavolo</CardTitle>
@@ -445,7 +431,6 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
             </CardContent>
           </Card>
 
-          {/* Unassigned Reservations */}
           <Card className="glass-card">
             <CardHeader className="pb-3">
               <CardTitle className="text-base">Prenotazioni da Assegnare</CardTitle>
@@ -524,9 +509,22 @@ interface GridCellProps {
   tipoZona: TipoZona | null;
   neighbors?: CellNeighbors;
   onDelete: () => void;
+
+  // ✅ nuovi: per ridimensionare davvero celle e contenuti
+  cellSize: number;
+  contentScale: number;
 }
 
-function GridCell({ x, y, table, tipoZona, neighbors, onDelete }: GridCellProps) {
+function GridCell({
+  x,
+  y,
+  table,
+  tipoZona,
+  neighbors,
+  onDelete,
+  cellSize,
+  contentScale,
+}: GridCellProps) {
   const isVivibile = tipoZona === 'SPAZIO_VIVIBILE';
 
   const { setNodeRef, isOver } = useDroppable({
@@ -534,13 +532,19 @@ function GridCell({ x, y, table, tipoZona, neighbors, onDelete }: GridCellProps)
     disabled: !table && !isVivibile,
   });
 
-  // CELLA VUOTA
+  // ✅ dimensione reale cella
+  const cellStyle: React.CSSProperties = {
+    width: cellSize,
+    height: cellSize,
+  };
+
   if (!table) {
     return (
       <div
         ref={setNodeRef}
+        style={cellStyle}
         className={cn(
-          'aspect-square rounded-[4px] border transition-colors',
+          'rounded-[4px] border transition-colors',
           isVivibile && 'grid-cell',
           !isVivibile && 'bg-[#d8c8b1] opacity-70 border-[#b8a994] cursor-not-allowed',
           isOver && isVivibile && 'grid-cell-active'
@@ -549,12 +553,12 @@ function GridCell({ x, y, table, tipoZona, neighbors, onDelete }: GridCellProps)
     );
   }
 
-  // TAVOLO (droppable per prenotazioni)
   return (
     <div
       ref={setNodeRef}
+      style={cellStyle}
       className={cn(
-        'relative aspect-square p-1 flex flex-col items-center justify-center transition-all',
+        'relative p-1 flex items-center justify-center transition-all overflow-hidden',
         'border-2',
         table.stato === 'LIBERO' && 'bg-status-free/20 border-status-free',
         table.stato === 'RISERVATO' && 'bg-status-reserved/20 border-status-reserved',
@@ -566,15 +570,23 @@ function GridCell({ x, y, table, tipoZona, neighbors, onDelete }: GridCellProps)
         neighbors?.down && 'border-b-0 rounded-b-none'
       )}
     >
-      <Users className="h-4 w-4 mb-0.5" />
-      {typeof table.capacita === 'number' && (
-        <span className="text-[11px] font-medium">{table.capacita}</span>
-      )}
+      {/* ✅ scala contenuti per evitare che “spingano” fuori la griglia */}
+      <div
+        className="flex flex-col items-center justify-center leading-none"
+        style={{ transform: `scale(${contentScale})`, transformOrigin: 'center' }}
+      >
+        <Users className="h-4 w-4 mb-0.5" />
+        {typeof table.capacita === 'number' && (
+          <span className="text-[11px] font-medium">{table.capacita}</span>
+        )}
+      </div>
+
       {table.nomePrenotazione && (
         <span className="absolute bottom-0.5 text-[10px] font-medium truncate max-w-full px-1">
           {table.nomePrenotazione}
         </span>
       )}
+
       <button
         onClick={onDelete}
         className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-background/80 hover:bg-destructive hover:text-destructive-foreground flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity"
