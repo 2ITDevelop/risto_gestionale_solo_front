@@ -207,6 +207,7 @@ const handleTouchStartPinch = (e: React.TouchEvent<HTMLDivElement>) => {
 };
 
 const handleTouchMovePinch = (e: React.TouchEvent<HTMLDivElement>) => {
+  if (activeId) return;
   if (e.touches.length !== 2) return;
   if (pinchStartDistRef.current == null) return;
 
@@ -490,7 +491,7 @@ const handleTouchEndPinch = (e: React.TouchEvent<HTMLDivElement>) => {
   onTouchCancel={handleTouchEndPinch}
   style={{
     WebkitOverflowScrolling: 'touch',
-    touchAction: 'pan-x pan-y', // 1 dito: scroll normale
+    touchAction: 'manipulation', 
     height: `${viewportH}px`,
   }}
 >
