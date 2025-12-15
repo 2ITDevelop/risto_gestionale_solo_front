@@ -149,15 +149,10 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
   };
 
   /* ======================
-     ✅ Zoom stabile + FIT a 1x (tutte le sale entrano)
-     - anti-glitch mobile: niente ResizeObserver
-     - retry se misure 0
-     - remount su cambio sala/data/turno
-     - padding/bordi “abbondanti”
+     ✅ Zoom reale + FIT a 1x (tutta la sala entra) + scroll mobile OK
      ====================== */
 
   const layoutKey = `${sala.nome}-${date}-${turno}`;
-
   const gridViewportRef = useRef<HTMLDivElement | null>(null);
 
   const [isMobile, setIsMobile] = useState(false);
@@ -170,7 +165,7 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
   }, []);
 
   const GAP = 2; // gap-[2px]
-  const PAD = 12; // bordo interno “più largo” per evitare glitch di allineamento
+  const PAD = 12; // bordo interno “abbondante” per evitare glitch
   const DESKTOP_VIEWPORT_H = 520;
 
   const [zoom, setZoom] = useState(1);
@@ -179,10 +174,13 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
   const viewportH = useMemo(() => {
     if (!isMobile) return DESKTOP_VIEWPORT_H;
     const vh = Math.floor(window.innerHeight * 0.7);
-    return clamp(vh, 280, 720); // evita viewport troppo piccola/grande
+    return clamp(vh, 280, 720);
   }, [isMobile]);
 
+  // ✅ ZOOM REALE (NON usare transform sulla griglia)
   const cellSize = useMemo(() => Math.round(baseCell * zoom), [baseCell, zoom]);
+
+  // scala solo l’icona/testo per non farli diventare enormi
   const contentScale = useMemo(() => clamp(cellSize / 40, 0.45, 1), [cellSize]);
 
   // reset “hard” su cambio sala/date/turno
@@ -195,7 +193,7 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
     }
   }, [layoutKey]);
 
-  // FIT: baseCell calcolata per far entrare tutta la sala a zoom=1
+  // ✅ FIT: calcola baseCell per far entrare tutta la sala a zoom=1
   useLayoutEffect(() => {
     const el = gridViewportRef.current;
     if (!el) return;
@@ -226,21 +224,19 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
 
       const next = Math.max(1, Math.floor(Math.min(byW, byH)));
 
-      // evita micro-loop inutili
-      setBaseCell((prev) => (Math.abs(prev - next) <= 0 ? prev : next));
+      setBaseCell((prev) => (prev === next ? prev : next));
     };
 
     computeFit();
 
-    const onResize = () => computeFit();
-    window.addEventListener('resize', onResize);
-    window.addEventListener('orientationchange', onResize);
+    window.addEventListener('resize', computeFit);
+    window.addEventListener('orientationchange', computeFit);
 
     return () => {
       cancelled = true;
       cancelAnimationFrame(raf);
-      window.removeEventListener('resize', onResize);
-      window.removeEventListener('orientationchange', onResize);
+      window.removeEventListener('resize', computeFit);
+      window.removeEventListener('orientationchange', computeFit);
     };
   }, [layoutKey, width, height, viewportH]);
 
@@ -391,7 +387,7 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
             <div className="p-4 rounded-lg bg-secondary/30 w-full min-w-0">
               <div className="min-w-0">
                 <div
-                  key={layoutKey} // remount anti “stato sporco”
+                  key={layoutKey}
                   ref={gridViewportRef}
                   className="rounded-md w-full min-w-0 overflow-auto"
                   style={{
@@ -400,10 +396,10 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
                     height: `${viewportH}px`,
                   }}
                 >
-                  {/* a 1x centrata; zoom>1 parte dall’alto (meno “saltelli”) */}
+                  {/* ✅ FIX mobile: niente h-full, altrimenti lo scroll può “fermarsi” */}
                   <div
                     className={cn(
-                      'w-full h-full',
+                      'w-full',
                       zoom === 1 ? 'flex items-center justify-center' : 'flex items-start justify-center'
                     )}
                     style={{ padding: PAD }}
@@ -525,9 +521,7 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Eliminare il tavolo?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Questa azione rimuoverà il tavolo dalla posizione selezionata.
-            </AlertDialogDescription>
+            <AlertDialogDescription>Questa azione rimuoverà il tavolo dalla posizione selezionata.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Annulla</AlertDialogCancel>
