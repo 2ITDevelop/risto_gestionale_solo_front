@@ -44,11 +44,6 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 
-/** Dimensione “naturale” celle (prima era CELL_SIZE) */
-const BASE_CELL = 55;
-/** Deve matchare gap-[2px] */
-const CELL_GAP = 2;
-
 /* ======================
    Tipi FE
    ====================== */
@@ -179,45 +174,46 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
   };
 
   /* ======================
-     FIT-TO-SCREEN (auto scale)
+     FIT-TO-SCREEN (celle dinamiche)
      ====================== */
 
-  const viewportRef = useRef<HTMLDivElement | null>(null);
-  const [scale, setScale] = useState(1);
-
-  const naturalGridWidth = useMemo(
-    () => width * BASE_CELL + Math.max(0, width - 1) * CELL_GAP,
-    [width]
-  );
-
-  const naturalGridHeight = useMemo(
-    () => height * BASE_CELL + Math.max(0, height - 1) * CELL_GAP,
-    [height]
-  );
+  const gridContainerRef = useRef<HTMLDivElement | null>(null);
+  const [cellSize, setCellSize] = useState<number>(40);
 
   useEffect(() => {
-    const el = viewportRef.current;
+    const el = gridContainerRef.current;
     if (!el) return;
 
-    const ro = new ResizeObserver(() => {
+    const resize = () => {
       const rect = el.getBoundingClientRect();
 
-      // margine “interno” per non toccare i bordi
+      // spazio reale disponibile (tolgo un filo per padding/bordi)
       const availableW = Math.max(1, rect.width - 8);
       const availableH = Math.max(1, rect.height - 8);
 
-      const sW = availableW / naturalGridWidth;
-      const sH = availableH / naturalGridHeight;
+      // gap reale (matcha gap-[2px])
+      const gap = 2;
 
-      // non ingrandire oltre 1, solo riduci se serve
-      const next = Math.min(1, sW, sH);
+      // spazio occupato dai gap
+      const totalGapW = Math.max(0, width - 1) * gap;
+      const totalGapH = Math.max(0, height - 1) * gap;
 
-      setScale(Number.isFinite(next) ? next : 1);
-    });
+      // dimensione cella massima per stare dentro (sia in larghezza che in altezza)
+      const sizeByWidth = (availableW - totalGapW) / width;
+      const sizeByHeight = (availableH - totalGapH) / height;
 
+      const next = Math.floor(Math.min(sizeByWidth, sizeByHeight));
+
+      // clamp: minimo 4px per “esistere”, massimo 70px per non esplodere su sale piccole
+      setCellSize(Math.max(4, Math.min(70, Number.isFinite(next) ? next : 40)));
+    };
+
+    resize();
+
+    const ro = new ResizeObserver(resize);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [naturalGridWidth, naturalGridHeight]);
+  }, [width, height]);
 
   /* ======================
      DND handlers
@@ -376,57 +372,47 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
             </div>
           </CardHeader>
 
-          {/* ✅ Fit-to-screen */}
+          {/* ✅ Fit-to-screen reale: cambiano le dimensioni delle celle */}
           <CardContent className="min-w-0">
             <div
-              ref={viewportRef}
+              ref={gridContainerRef}
               className={cn(
-                'p-4 rounded-lg bg-secondary/30 min-w-0 w-full overflow-hidden',
-                // su mobile assegniamo un’altezza “viewport-like” così può scalare anche in verticale
+                'p-4 rounded-lg bg-secondary/30 w-full min-w-0 overflow-hidden',
+                // su mobile diamo un'altezza “viewport-like” per far stare anche sale alte (100 righe)
                 'h-[70vh] sm:h-[75vh] md:h-auto',
-                'flex items-start justify-center'
+                'flex items-center justify-center'
               )}
             >
               <div
+                className="grid gap-[2px]"
                 style={{
-                  width: naturalGridWidth,
-                  height: naturalGridHeight,
-                  transform: `scale(${scale})`,
-                  transformOrigin: 'top left',
+                  gridTemplateColumns: `repeat(${width}, ${cellSize}px)`,
                 }}
               >
-                <div
-                  className="grid"
-                  style={{
-                    gap: `${CELL_GAP}px`,
-                    gridTemplateColumns: `repeat(${width}, ${BASE_CELL}px)`,
-                  }}
-                >
-                  {gridCells.map(({ x, y, tipoZona }) => {
-                    const table = getTableAt(x, y);
+                {gridCells.map(({ x, y, tipoZona }) => {
+                  const table = getTableAt(x, y);
 
-                    const neighbors = table
-                      ? {
-                          left: !!getTableAt(x - 1, y),
-                          right: !!getTableAt(x + 1, y),
-                          up: !!getTableAt(x, y - 1),
-                          down: !!getTableAt(x, y + 1),
-                        }
-                      : undefined;
+                  const neighbors = table
+                    ? {
+                        left: !!getTableAt(x - 1, y),
+                        right: !!getTableAt(x + 1, y),
+                        up: !!getTableAt(x, y - 1),
+                        down: !!getTableAt(x, y + 1),
+                      }
+                    : undefined;
 
-                    return (
-                      <GridCell
-                        key={`${x}-${y}`}
-                        x={x}
-                        y={y}
-                        table={table}
-                        tipoZona={tipoZona}
-                        neighbors={neighbors}
-                        onDelete={() => setDeleteTarget({ x, y })}
-                      />
-                    );
-                  })}
-                </div>
+                  return (
+                    <GridCell
+                      key={`${x}-${y}`}
+                      x={x}
+                      y={y}
+                      table={table}
+                      tipoZona={tipoZona}
+                      neighbors={neighbors}
+                      onDelete={() => setDeleteTarget({ x, y })}
+                    />
+                  );
+                })}
               </div>
             </div>
           </CardContent>
@@ -534,6 +520,7 @@ function GridCell({ x, y, table, tipoZona, neighbors, onDelete }: GridCellProps)
     disabled: !table && !isVivibile,
   });
 
+  // CELLA VUOTA
   if (!table) {
     return (
       <div
@@ -548,6 +535,7 @@ function GridCell({ x, y, table, tipoZona, neighbors, onDelete }: GridCellProps)
     );
   }
 
+  // TAVOLO (droppable per prenotazioni)
   return (
     <div
       ref={setNodeRef}
