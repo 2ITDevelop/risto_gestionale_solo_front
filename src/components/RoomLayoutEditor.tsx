@@ -208,8 +208,9 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
 
   const [zoom, setZoom] = useState(1);
 
-  const cellSize = useMemo(() => Math.round(baseCell * zoom), [baseCell, zoom]);
-  const contentScale = useMemo(() => clamp(cellSize / 40, 0.45, 1), [cellSize]);
+const effectiveZoom = zoom === 0 ? 1 : zoom; // 0 => fit-to-card
+const cellSize = useMemo(() => Math.round(baseCell * effectiveZoom), [baseCell, effectiveZoom]);
+const contentScale = useMemo(() => clamp(cellSize / 40, 0.45, 1), [cellSize]);
 
   /* ======================
      DND handlers
@@ -410,23 +411,30 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
                   </div>
                 </div>
 
-                {/* leva zoom (tutta nella card) */}
-                <div className="w-10 flex flex-col items-center justify-between py-2">
-                  <span className="text-[11px] text-muted-foreground">+</span>
+                {/* leva zoom orizzontale (tutta nella card) */}
+<div className="mt-3 flex items-center gap-3">
+  <span className="text-[11px] text-muted-foreground w-10">fit</span>
 
-                  <div className="flex-1 flex items-center justify-center">
-                    <div className="h-56 flex items-center justify-center">
-                      <div className="rotate-[-90deg] w-56">
-                        <Slider
-                          value={[zoom]}
-                          min={1}
-                          max={3.5}
-                          step={0.05}
-                          onValueChange={(v) => setZoom(v[0] ?? 1)}
-                        />
-                      </div>
-                    </div>
-                  </div>
+  <Slider
+    value={[zoom]}
+    min={0}
+    max={3.5}
+    step={0.05}
+    onValueChange={(v) => setZoom(v[0] ?? 0)}
+    className="flex-1"
+  />
+
+  <span className="text-[11px] text-muted-foreground w-10 text-right">3.5x</span>
+
+  <button
+    type="button"
+    className="ml-2 text-[11px] text-muted-foreground hover:text-foreground"
+    onClick={() => setZoom(0)}
+  >
+    reset
+  </button>
+</div>
+
 
                   <span className="text-[11px] text-muted-foreground">−</span>
 
