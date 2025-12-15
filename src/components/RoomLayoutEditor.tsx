@@ -450,16 +450,16 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
                 </div>
 
                 <div className="mt-3 flex items-center gap-3">
-                  <span className="text-[11px] text-muted-foreground w-10">1x</span>
+                  <span className="text-[11px] text-muted-foreground w-10">0.5x</span>
 
                   <Slider
-                    value={[zoom]}
-                    min={1}
-                    max={3.5}
-                    step={0.05}
-                    onValueChange={(v) => setZoom(v[0] ?? 1)}
-                    className="flex-1"
-                  />
+  value={[zoom]}
+  min={0.5}
+  max={3.5}
+  step={0.05}
+  onValueChange={(v) => setZoom(v[0] ?? 1)}
+/>
+
 
                   <span className="text-[11px] text-muted-foreground w-10 text-right">3.5x</span>
 
