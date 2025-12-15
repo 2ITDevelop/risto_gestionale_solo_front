@@ -301,7 +301,7 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
         >
           <div className="grid lg:grid-cols-[2fr,1fr] gap-6">
             {/* GRID */}
-            <Card className="p-4">
+            <Card className="p-4 min-w-0">
               <div className="flex items-center justify-between mb-4">
                 <div>
                   <p className="text-sm font-medium">Griglia sala</p>
@@ -353,19 +353,25 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
                 </div>
               </div>
 
-              <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${gridWidth}, 1fr)` }}>
-                {gridCells.map((c) => (
-                  <ZoneCell
-                    key={`${c.x}-${c.y}`}
-                    x={c.x}
-                    y={c.y}
-                    tipoZona={c.tipoZona}
-                    ghost={activeDrag && hoverCell ? { ...activeDrag, anchor: hoverCell } : null}
-                    gridWidth={gridWidth}
-                    gridHeight={gridHeight}
-                  />
-                ))}
-              </div>
+              <div className="overflow-x-auto -mx-1 px-1">
+  <div
+    className="grid gap-1 w-max"
+    style={{ gridTemplateColumns: `repeat(${gridWidth}, 1fr)` }}
+  >
+    {gridCells.map((c) => (
+      <ZoneCell
+        key={`${c.x}-${c.y}`}
+        x={c.x}
+        y={c.y}
+        tipoZona={c.tipoZona}
+        ghost={activeDrag && hoverCell ? { ...activeDrag, anchor: hoverCell } : null}
+        gridWidth={gridWidth}
+        gridHeight={gridHeight}
+      />
+    ))}
+  </div>
+</div>
+
             </Card>
 
             {/* SIDEBAR */}
