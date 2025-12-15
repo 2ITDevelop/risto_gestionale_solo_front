@@ -263,6 +263,19 @@ const handleTouchEndPinch = (e: React.TouchEvent<HTMLDivElement>) => {
   // ✅ ZOOM REALE (NO transform sulla griglia)
   const cellSize = useMemo(() => Math.round(baseCell * zoom), [baseCell, zoom]);
 
+  const gridPixelH = useMemo(
+  () => height * cellSize + Math.max(0, height - 1) * GAP,
+  [height, cellSize, GAP]
+);
+
+const contentH = useMemo(() => gridPixelH + PAD * 2, [gridPixelH, PAD]);
+
+const effectiveViewportH = useMemo(() => {
+  const minH = 220; // evita che diventi troppo basso
+  return clamp(Math.min(viewportH, contentH), minH, viewportH);
+}, [viewportH, contentH]);
+
+
   // scala solo l’icona/testo
   const contentScale = useMemo(() => clamp(cellSize / 40, 0.45, 1), [cellSize]);
 
@@ -516,7 +529,7 @@ const handleTouchEndPinch = (e: React.TouchEvent<HTMLDivElement>) => {
   style={{
     WebkitOverflowScrolling: 'touch',
     touchAction: 'manipulation', 
-    height: `${viewportH}px`,
+    height: `${effectiveViewportH}px`,
   }}
 >
 
