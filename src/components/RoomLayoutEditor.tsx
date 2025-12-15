@@ -179,7 +179,54 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
   const PAD = 12;
   const DESKTOP_VIEWPORT_H = 520;
 
-  const [zoom, setZoom] = useState(1);
+
+const [zoom, setZoom] = useState(1);
+
+// ===== Pinch-to-zoom (2 dita) =====
+type TouchPoint = { clientX: number; clientY: number };
+
+const pinchStartDistRef = useRef<number | null>(null);
+const pinchStartZoomRef = useRef<number>(1);
+
+const MIN_ZOOM = 0.5;
+const MAX_ZOOM = 3.5;
+
+const clampZoom = (z: number) => clamp(z, MIN_ZOOM, MAX_ZOOM);
+
+const dist2 = (t1: TouchPoint, t2: TouchPoint) => {
+  const dx = t1.clientX - t2.clientX;
+  const dy = t1.clientY - t2.clientY;
+  return Math.hypot(dx, dy);
+};
+
+const handleTouchStartPinch = (e: React.TouchEvent<HTMLDivElement>) => {
+  if (e.touches.length === 2) {
+    pinchStartDistRef.current = dist2(e.touches[0], e.touches[1]);
+    pinchStartZoomRef.current = zoom;
+  }
+};
+
+const handleTouchMovePinch = (e: React.TouchEvent<HTMLDivElement>) => {
+  if (e.touches.length !== 2) return;
+  if (pinchStartDistRef.current == null) return;
+
+  // pinch = gesture intenzionale
+  e.preventDefault();
+
+  const d = dist2(e.touches[0], e.touches[1]);
+  const startD = pinchStartDistRef.current;
+  if (startD <= 0) return;
+
+  const scale = d / startD;
+  setZoom(clampZoom(pinchStartZoomRef.current * scale));
+};
+
+const handleTouchEndPinch = (e: React.TouchEvent<HTMLDivElement>) => {
+  if (e.touches.length < 2) pinchStartDistRef.current = null;
+};
+
+
+
   const [baseCell, setBaseCell] = useState(22);
 
   const viewportH = useMemo(() => {
@@ -203,6 +250,21 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
       el.scrollTop = 0;
     }
   }, [layoutKey]);
+
+
+  useEffect(() => {
+  const el = gridViewportRef.current;
+  if (!el) return;
+
+  const onTouchMove = (ev: TouchEvent) => {
+    if (ev.touches.length === 2) {
+      ev.preventDefault();
+    }
+  };
+
+  el.addEventListener('touchmove', onTouchMove, { passive: false });
+  return () => el.removeEventListener('touchmove', onTouchMove);
+}, []);
 
   // ✅ FIT: calcola baseCell per far entrare tutta la sala a zoom=1
   useLayoutEffect(() => {
@@ -419,15 +481,20 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
             <div className="p-4 rounded-lg bg-secondary/30 w-full min-w-0 min-h-0">
               <div className="min-w-0 min-h-0">
                 <div
-                  key={layoutKey}
-                  ref={gridViewportRef}
-                  className="rounded-md w-full min-w-0 overflow-auto"
-                  style={{
-                    WebkitOverflowScrolling: 'touch',
-                    touchAction: 'pan-x pan-y', // ✅ rimane UGUALE
-                    height: `${viewportH}px`,
-                  }}
-                >
+  key={layoutKey}
+  ref={gridViewportRef}
+  className="rounded-md w-full min-w-0 overflow-auto"
+  onTouchStart={handleTouchStartPinch}
+  onTouchMove={handleTouchMovePinch}
+  onTouchEnd={handleTouchEndPinch}
+  onTouchCancel={handleTouchEndPinch}
+  style={{
+    WebkitOverflowScrolling: 'touch',
+    touchAction: 'pan-x pan-y', // 1 dito: scroll normale
+    height: `${viewportH}px`,
+  }}
+>
+
                   {/* ✅ wrapper neutro: niente flex, altrimenti su iOS può “limitare” lo scroll */}
                   <div
                     style={{
