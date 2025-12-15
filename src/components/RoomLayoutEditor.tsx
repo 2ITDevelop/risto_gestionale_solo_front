@@ -47,7 +47,7 @@ type UILayoutReservation = Reservation & {
 };
 
 type UILayoutTavolo = Tavolo & {
-  capacita?: number;
+  // ✅ un solo tipo di tavolo: niente capacity/palette
   nomePrenotazione?: string;
   nomeSala?: string;
   turno?: Turno;
@@ -59,12 +59,7 @@ type DragDataReservation = {
   name: string;
 };
 
-type DragDataNewTable = {
-  type: 'new-table';
-  capacity: number;
-};
-
-type DragData = DragDataReservation | DragDataNewTable;
+type DragData = DragDataReservation;
 
 /* ======================
    Helpers zone
@@ -119,12 +114,15 @@ interface RoomLayoutEditorProps {
   canEditTables: boolean;
 }
 
+type EditMode = 'NONE' | 'ADD' | 'DELETE';
+
 export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayoutEditorProps) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ x: number; y: number } | null>(null);
+  const [editMode, setEditMode] = useState<EditMode>('NONE');
+
   const pinchRafRef = useRef<number | null>(null);
   const pinchPendingZoomRef = useRef<number | null>(null);
-
 
   const {
     data: tables,
@@ -182,75 +180,71 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
   const PAD = 12;
   const DESKTOP_VIEWPORT_H = 520;
 
+  const [zoom, setZoom] = useState(1);
 
-const [zoom, setZoom] = useState(1);
+  // ===== Pinch-to-zoom (2 dita) =====
+  type TouchPoint = { clientX: number; clientY: number };
 
-// ===== Pinch-to-zoom (2 dita) =====
-type TouchPoint = { clientX: number; clientY: number };
+  const pinchStartDistRef = useRef<number | null>(null);
+  const pinchStartZoomRef = useRef<number>(1);
 
-const pinchStartDistRef = useRef<number | null>(null);
-const pinchStartZoomRef = useRef<number>(1);
+  const MIN_ZOOM = 0.5;
+  const MAX_ZOOM = 3.5;
 
-const MIN_ZOOM = 0.5;
-const MAX_ZOOM = 3.5;
+  const clampZoom = (z: number) => clamp(z, MIN_ZOOM, MAX_ZOOM);
 
-const clampZoom = (z: number) => clamp(z, MIN_ZOOM, MAX_ZOOM);
+  const dist2 = (t1: TouchPoint, t2: TouchPoint) => {
+    const dx = t1.clientX - t2.clientX;
+    const dy = t1.clientY - t2.clientY;
+    return Math.hypot(dx, dy);
+  };
 
-const dist2 = (t1: TouchPoint, t2: TouchPoint) => {
-  const dx = t1.clientX - t2.clientX;
-  const dy = t1.clientY - t2.clientY;
-  return Math.hypot(dx, dy);
-};
-
-const handleTouchStartPinch = (e: React.TouchEvent<HTMLDivElement>) => {
-  if (e.touches.length === 2) {
-    pinchStartDistRef.current = dist2(e.touches[0], e.touches[1]);
-    pinchStartZoomRef.current = zoom;
-  }
-};
-
-const handleTouchMovePinch = (e: React.TouchEvent<HTMLDivElement>) => {
-  if (activeId) return;
-
-  if (e.touches.length !== 2) return;
-  if (pinchStartDistRef.current == null) return;
-
-  e.preventDefault();
-
-  const d = dist2(e.touches[0], e.touches[1]);
-  const startD = pinchStartDistRef.current;
-  if (startD <= 0) return;
-
-  const scale = d / startD;
-  const nextZoom = clampZoom(pinchStartZoomRef.current * scale);
-
-  // ✅ aggiorna al massimo 1 volta per frame
-  pinchPendingZoomRef.current = nextZoom;
-
-  if (pinchRafRef.current == null) {
-    pinchRafRef.current = requestAnimationFrame(() => {
-      const z = pinchPendingZoomRef.current;
-      if (z != null) setZoom(z);
-      pinchRafRef.current = null;
-    });
-  }
-};
-
-
-const handleTouchEndPinch = (e: React.TouchEvent<HTMLDivElement>) => {
-  if (e.touches.length < 2) {
-    pinchStartDistRef.current = null;
-    pinchPendingZoomRef.current = null;
-
-    if (pinchRafRef.current != null) {
-      cancelAnimationFrame(pinchRafRef.current);
-      pinchRafRef.current = null;
+  const handleTouchStartPinch = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length === 2) {
+      pinchStartDistRef.current = dist2(e.touches[0], e.touches[1]);
+      pinchStartZoomRef.current = zoom;
     }
-  }
-};
+  };
 
+  const handleTouchMovePinch = (e: React.TouchEvent<HTMLDivElement>) => {
+    // mentre trascini una prenotazione, non pinchare
+    if (activeId) return;
 
+    if (e.touches.length !== 2) return;
+    if (pinchStartDistRef.current == null) return;
 
+    e.preventDefault();
+
+    const d = dist2(e.touches[0], e.touches[1]);
+    const startD = pinchStartDistRef.current;
+    if (startD <= 0) return;
+
+    const scale = d / startD;
+    const nextZoom = clampZoom(pinchStartZoomRef.current * scale);
+
+    // ✅ aggiorna al massimo 1 volta per frame
+    pinchPendingZoomRef.current = nextZoom;
+
+    if (pinchRafRef.current == null) {
+      pinchRafRef.current = requestAnimationFrame(() => {
+        const z = pinchPendingZoomRef.current;
+        if (z != null) setZoom(z);
+        pinchRafRef.current = null;
+      });
+    }
+  };
+
+  const handleTouchEndPinch = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length < 2) {
+      pinchStartDistRef.current = null;
+      pinchPendingZoomRef.current = null;
+
+      if (pinchRafRef.current != null) {
+        cancelAnimationFrame(pinchRafRef.current);
+        pinchRafRef.current = null;
+      }
+    }
+  };
 
   const [baseCell, setBaseCell] = useState(22);
 
@@ -263,25 +257,13 @@ const handleTouchEndPinch = (e: React.TouchEvent<HTMLDivElement>) => {
   // ✅ ZOOM REALE (NO transform sulla griglia)
   const cellSize = useMemo(() => Math.round(baseCell * zoom), [baseCell, zoom]);
 
- /* const gridPixelH = useMemo(
-  () => height * cellSize + Math.max(0, height - 1) * GAP,
-  [height, cellSize, GAP]
-);
-
-const contentH = useMemo(() => gridPixelH + PAD * 2, [gridPixelH, PAD]);
-
-const effectiveViewportH = useMemo(() => {
-  const minH = 220; // evita che diventi troppo basso
-  return clamp(Math.min(viewportH, contentH), minH, viewportH);
-}, [viewportH, contentH]);
-
-*/
   // scala solo l’icona/testo
   const contentScale = useMemo(() => clamp(cellSize / 40, 0.45, 1), [cellSize]);
 
   // reset “hard” su cambio sala/date/turno
   useEffect(() => {
     setZoom(1);
+    setEditMode('NONE'); // ✅ reset modalità su cambio contesto
     const el = gridViewportRef.current;
     if (el) {
       el.scrollLeft = 0;
@@ -289,20 +271,19 @@ const effectiveViewportH = useMemo(() => {
     }
   }, [layoutKey]);
 
-
   useEffect(() => {
-  const el = gridViewportRef.current;
-  if (!el) return;
+    const el = gridViewportRef.current;
+    if (!el) return;
 
-  const onTouchMove = (ev: TouchEvent) => {
-    if (ev.touches.length === 2) {
-      ev.preventDefault();
-    }
-  };
+    const onTouchMove = (ev: TouchEvent) => {
+      if (ev.touches.length === 2) {
+        ev.preventDefault();
+      }
+    };
 
-  el.addEventListener('touchmove', onTouchMove, { passive: false });
-  return () => el.removeEventListener('touchmove', onTouchMove);
-}, []);
+    el.addEventListener('touchmove', onTouchMove, { passive: false });
+    return () => el.removeEventListener('touchmove', onTouchMove);
+  }, []);
 
   // ✅ FIT: calcola baseCell per far entrare tutta la sala a zoom=1
   useLayoutEffect(() => {
@@ -358,7 +339,6 @@ const effectiveViewportH = useMemo(() => {
 
   /* ======================
      ✅ FIX MOBILE: sensors per evitare conflitto scroll vs drag
-     (scroll rimane attivo, il drag parte con una micro "pressione")
      ====================== */
 
   const sensors = useSensors(
@@ -366,24 +346,53 @@ const effectiveViewportH = useMemo(() => {
       activationConstraint: { distance: 6 },
     }),
     useSensor(TouchSensor, {
-      // su smartphone: evita che lo swipe venga "rubato" dal drag
-      // e rende il drag affidabile quando premi intenzionalmente
       activationConstraint: { delay: 320, tolerance: 4 },
     })
   );
 
   /* ======================
-     DND handlers
+     Tap-to-add / Tap-to-delete
+     ====================== */
+
+  const handleCellTap = (x: number, y: number) => {
+    if (!canEditTables) return;
+    if (editMode !== 'ADD') return;
+
+    const cell = gridCells.find((c) => c.x === x && c.y === y);
+    if (!cell || !isCellVivibile(cell.tipoZona)) return;
+
+    // se già presente tavolo, non fare nulla
+    if (getTableAt(x, y)) return;
+
+    createTables.mutate({
+      nomeSala: sala.nome,
+      date,
+      turno,
+      table: { x, y, stato: 'LIBERO' as TableStatus },
+    });
+  };
+
+  const handleTableTap = (x: number, y: number) => {
+    if (!canEditTables) return;
+    if (editMode !== 'DELETE') return;
+    setDeleteTarget({ x, y });
+  };
+
+  /* ======================
+     DND handlers (solo prenotazioni)
      ====================== */
 
   const handleDragStart = (event: DragStartEvent) => {
+    // ✅ durante ADD/DELETE non trascinare prenotazioni: eviti conflitti con tap
     if (!canEditTables) return;
+    if (editMode !== 'NONE') return;
     setActiveId(String(event.active.id));
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
     setActiveId(null);
     if (!canEditTables) return;
+    if (editMode !== 'NONE') return;
 
     const { active, over } = event;
     if (!over) return;
@@ -404,26 +413,6 @@ const effectiveViewportH = useMemo(() => {
         x,
         y,
         nomePrenotazione: dragData.name,
-      });
-      return;
-    }
-
-    if (dragData.type === 'new-table' && overId.startsWith('cell-')) {
-      const [, xStr, yStr] = overId.split('-');
-      const x = Number(xStr);
-      const y = Number(yStr);
-
-      const cell = gridCells.find((c) => c.x === x && c.y === y);
-      if (!cell || !isCellVivibile(cell.tipoZona)) return;
-
-      const existingTable = getTableAt(x, y);
-      if (existingTable) return;
-
-      createTables.mutate({
-        nomeSala: sala.nome,
-        date,
-        turno,
-        table: { x, y, stato: 'LIBERO' as TableStatus },
       });
     }
   };
@@ -475,6 +464,9 @@ const effectiveViewportH = useMemo(() => {
      Render
      ====================== */
 
+  const modeLabel =
+    editMode === 'NONE' ? 'Normale' : editMode === 'ADD' ? 'Aggiungi tavoli' : 'Elimina tavoli';
+
   return (
     <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
       <div className="grid lg:grid-cols-[1fr,300px] gap-6">
@@ -486,6 +478,7 @@ const effectiveViewportH = useMemo(() => {
                 <CardDescription>
                   {tables?.length || 0} tavoli · {width}x{height} griglia
                   <span className="ml-2 text-xs text-muted-foreground">· zoom {zoom.toFixed(2)}x</span>
+                  <span className="ml-2 text-xs text-muted-foreground">· modalità: {modeLabel}</span>
                 </CardDescription>
               </div>
 
@@ -513,76 +506,137 @@ const effectiveViewportH = useMemo(() => {
                 )}
               </div>
             </div>
+
+            {/* ✅ Toolbar modalità */}
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={!canEditTables}
+                onClick={() => setEditMode((m) => (m === 'ADD' ? 'NONE' : 'ADD'))}
+                className={cn(
+                  'px-3 py-1.5 rounded-md text-sm border transition-colors',
+                  !canEditTables && 'opacity-50 cursor-not-allowed',
+                  editMode === 'ADD'
+                    ? 'bg-primary text-primary-foreground border-primary'
+                    : 'bg-background hover:bg-secondary border-border'
+                )}
+              >
+                Aggiungi
+              </button>
+
+              <button
+                type="button"
+                disabled={!canEditTables}
+                onClick={() => setEditMode((m) => (m === 'DELETE' ? 'NONE' : 'DELETE'))}
+                className={cn(
+                  'px-3 py-1.5 rounded-md text-sm border transition-colors',
+                  !canEditTables && 'opacity-50 cursor-not-allowed',
+                  editMode === 'DELETE'
+                    ? 'bg-destructive text-destructive-foreground border-destructive'
+                    : 'bg-background hover:bg-secondary border-border'
+                )}
+              >
+                Elimina
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setEditMode('NONE')}
+                className={cn(
+                  'px-3 py-1.5 rounded-md text-sm border transition-colors',
+                  'bg-background hover:bg-secondary border-border'
+                )}
+              >
+                Fine
+              </button>
+
+              {editMode === 'ADD' && (
+                <span className="text-xs text-muted-foreground ml-2">
+                  Tocca una cella vivibile vuota per aggiungere un tavolo
+                </span>
+              )}
+
+              {editMode === 'DELETE' && (
+                <span className="text-xs text-muted-foreground ml-2">Tocca un tavolo per eliminarlo</span>
+              )}
+
+              {editMode !== 'NONE' && (
+                <span className="text-xs text-amber-600 ml-2">
+                  In questa modalità il drag delle prenotazioni è disattivato
+                </span>
+              )}
+            </div>
           </CardHeader>
 
           <CardContent className="min-w-0 min-h-0">
             <div className="p-4 rounded-lg bg-secondary/30 w-full min-w-0 min-h-0">
               <div className="min-w-0 min-h-0">
                 <div
-  key={layoutKey}
-  ref={gridViewportRef}
-  className="rounded-md w-full min-w-0 overflow-auto"
-  onTouchStart={handleTouchStartPinch}
-  onTouchMove={handleTouchMovePinch}
-  onTouchEnd={handleTouchEndPinch}
-  onTouchCancel={handleTouchEndPinch}
-  style={{
-    WebkitOverflowScrolling: 'touch',
-    touchAction: 'manipulation', 
-    height: `${viewportH}px`,
-  }}
->
-
-                  {/* ✅ wrapper neutro: niente flex, altrimenti su iOS può “limitare” lo scroll */}
+                  key={layoutKey}
+                  ref={gridViewportRef}
+                  className="rounded-md w-full min-w-0 overflow-auto"
+                  onTouchStart={handleTouchStartPinch}
+                  onTouchMove={handleTouchMovePinch}
+                  onTouchEnd={handleTouchEndPinch}
+                  onTouchCancel={handleTouchEndPinch}
+                  style={{
+                    WebkitOverflowScrolling: 'touch',
+                    touchAction: 'manipulation',
+                    height: `${viewportH}px`,
+                  }}
+                >
                   <div
-  style={{
-    padding: PAD,
-    width: 'max-content',
-    margin: '0 auto',
-    minHeight: `calc(${viewportH}px - ${PAD * 2}px)`,
-    display: 'flex',
-    alignItems: 'center',
-  }}
->
-  <div
-    className="grid gap-[2px]"
-    style={{
-      gridTemplateColumns: `repeat(${width}, ${cellSize}px)`,
-      gridAutoRows: `${cellSize}px`,
-      width: width * cellSize + Math.max(0, width - 1) * GAP,
-      height: height * cellSize + Math.max(0, height - 1) * GAP,
-    }}
-  >
-    {gridCells.map(({ x, y, tipoZona }) => {
-      const table = getTableAt(x, y);
+                    style={{
+                      padding: PAD,
+                      width: 'max-content',
+                      margin: '0 auto',
+                      minHeight: `calc(${viewportH}px - ${PAD * 2}px)`,
+                      display: 'flex',
+                      alignItems: 'center',
+                    }}
+                  >
+                    <div
+                      className="grid gap-[2px]"
+                      style={{
+                        gridTemplateColumns: `repeat(${width}, ${cellSize}px)`,
+                        gridAutoRows: `${cellSize}px`,
+                        width: width * cellSize + Math.max(0, width - 1) * GAP,
+                        height: height * cellSize + Math.max(0, height - 1) * GAP,
+                      }}
+                    >
+                      {gridCells.map(({ x, y, tipoZona }) => {
+                        const table = getTableAt(x, y);
 
-      const neighbors = table
-        ? {
-            left: !!getTableAt(x - 1, y),
-            right: !!getTableAt(x + 1, y),
-            up: !!getTableAt(x, y - 1),
-            down: !!getTableAt(x, y + 1),
-          }
-        : undefined;
+                        const neighbors = table
+                          ? {
+                              left: !!getTableAt(x - 1, y),
+                              right: !!getTableAt(x + 1, y),
+                              up: !!getTableAt(x, y - 1),
+                              down: !!getTableAt(x, y + 1),
+                            }
+                          : undefined;
 
-      return (
-        <GridCell
-          key={`${x}-${y}`}
-          x={x}
-          y={y}
-          table={table}
-          tipoZona={tipoZona}
-          neighbors={neighbors}
-          onDelete={() => setDeleteTarget({ x, y })}
-          cellSize={cellSize}
-          contentScale={contentScale}
-        />
-      );
-    })}
-  </div>
-</div>
-</div>
-
+                        return (
+                          <GridCell
+                            key={`${x}-${y}`}
+                            x={x}
+                            y={y}
+                            table={table}
+                            tipoZona={tipoZona}
+                            neighbors={neighbors}
+                            cellSize={cellSize}
+                            contentScale={contentScale}
+                            editMode={editMode}
+                            canEditTables={canEditTables}
+                            onCellTap={() => handleCellTap(x, y)}
+                            onTableTap={() => handleTableTap(x, y)}
+                            onDeleteIcon={() => setDeleteTarget({ x, y })}
+                          />
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
 
                 <div className="mt-3 flex items-center gap-3">
                   <span className="text-[11px] text-muted-foreground w-10">0.5x</span>
@@ -608,16 +662,6 @@ const effectiveViewportH = useMemo(() => {
         <div className="space-y-4">
           <Card className="glass-card">
             <CardHeader className="pb-3">
-              <CardTitle className="text-base">Nuovo Tavolo</CardTitle>
-              <CardDescription>Trascina sulla griglia per aggiungere un tavolo</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              <TablePaletteItem capacity={2} disabled={!canEditTables} />
-            </CardContent>
-          </Card>
-
-          <Card className="glass-card">
-            <CardHeader className="pb-3">
               <CardTitle className="text-base">Prenotazioni da Assegnare</CardTitle>
               <CardDescription>{unassignedReservations.length} in attesa</CardDescription>
             </CardHeader>
@@ -627,7 +671,11 @@ const effectiveViewportH = useMemo(() => {
               ) : (
                 <div className="space-y-2">
                   {unassignedReservations.map((r, i) => (
-                    <DraggableReservation key={`${r.nome}-${i}`} reservation={r} />
+                    <DraggableReservation
+                      key={`${r.nome}-${i}`}
+                      reservation={r}
+                      disabled={!canEditTables || editMode !== 'NONE'}
+                    />
                   ))}
                 </div>
               )}
@@ -641,11 +689,6 @@ const effectiveViewportH = useMemo(() => {
         {activeId && activeId.startsWith('reservation-') && (
           <div className="p-2 rounded-lg bg-primary text-primary-foreground shadow-lg">
             {activeId.replace('reservation-', '')}
-          </div>
-        )}
-        {activeId && activeId.startsWith('palette-') && (
-          <div className="w-16 h-16 rounded-lg bg-primary/80 flex items-center justify-center shadow-lg">
-            <Users className="h-6 w-6 text-primary-foreground" />
           </div>
         )}
       </DragOverlay>
@@ -689,12 +732,33 @@ interface GridCellProps {
   table?: UILayoutTavolo;
   tipoZona: TipoZona | null;
   neighbors?: CellNeighbors;
-  onDelete: () => void;
   cellSize: number;
   contentScale: number;
+
+  editMode: EditMode;
+  canEditTables: boolean;
+
+  onCellTap: () => void;
+  onTableTap: () => void;
+
+  // opzionale: iconcina trash (la teniamo, ma in DELETE basta tap sul tavolo)
+  onDeleteIcon: () => void;
 }
 
-function GridCell({ x, y, table, tipoZona, neighbors, onDelete, cellSize, contentScale }: GridCellProps) {
+function GridCell({
+  x,
+  y,
+  table,
+  tipoZona,
+  neighbors,
+  cellSize,
+  contentScale,
+  editMode,
+  canEditTables,
+  onCellTap,
+  onTableTap,
+  onDeleteIcon,
+}: GridCellProps) {
   const isVivibile = tipoZona === 'SPAZIO_VIVIBILE';
 
   const { setNodeRef, isOver } = useDroppable({
@@ -704,25 +768,46 @@ function GridCell({ x, y, table, tipoZona, neighbors, onDelete, cellSize, conten
 
   const style: React.CSSProperties = { width: cellSize, height: cellSize };
 
+  // ✅ helper: in pinch (2 dita) non vogliamo click fantasma
+  const ignoreIfMultiTouch = (e: React.TouchEvent | React.MouseEvent) => {
+    if ('touches' in e && e.touches && e.touches.length >= 2) return true;
+    return false;
+  };
+
   if (!table) {
+    const canAddHere = canEditTables && editMode === 'ADD' && isVivibile;
+
     return (
       <div
         ref={setNodeRef}
         style={style}
+        onClick={(e) => {
+          if (!canAddHere) return;
+          if (ignoreIfMultiTouch(e)) return;
+          onCellTap();
+        }}
         className={cn(
           'rounded-[4px] border transition-colors',
           isVivibile && 'grid-cell',
           !isVivibile && 'bg-[#d8c8b1] opacity-70 border-[#b8a994] cursor-not-allowed',
-          isOver && isVivibile && 'grid-cell-active'
+          isOver && isVivibile && 'grid-cell-active',
+          canAddHere && 'cursor-pointer'
         )}
       />
     );
   }
 
+  const canDeleteByTap = canEditTables && editMode === 'DELETE';
+
   return (
     <div
       ref={setNodeRef}
       style={style}
+      onClick={(e) => {
+        if (!canDeleteByTap) return;
+        if (ignoreIfMultiTouch(e)) return;
+        onTableTap();
+      }}
       className={cn(
         'relative p-1 flex items-center justify-center transition-all overflow-hidden',
         'border-2',
@@ -733,7 +818,8 @@ function GridCell({ x, y, table, tipoZona, neighbors, onDelete, cellSize, conten
         neighbors?.left && 'border-l-0 rounded-l-none',
         neighbors?.right && 'border-r-0 rounded-r-none',
         neighbors?.up && 'border-t-0 rounded-t-none',
-        neighbors?.down && 'border-b-0 rounded-b-none'
+        neighbors?.down && 'border-b-0 rounded-b-none',
+        canDeleteByTap && 'cursor-pointer'
       )}
     >
       <div
@@ -741,7 +827,6 @@ function GridCell({ x, y, table, tipoZona, neighbors, onDelete, cellSize, conten
         style={{ transform: `scale(${contentScale})`, transformOrigin: 'center' }}
       >
         <Users className="h-4 w-4 mb-0.5" />
-        {typeof table.capacita === 'number' && <span className="text-[11px] font-medium">{table.capacita}</span>}
       </div>
 
       {table.nomePrenotazione && (
@@ -750,75 +835,47 @@ function GridCell({ x, y, table, tipoZona, neighbors, onDelete, cellSize, conten
         </span>
       )}
 
-      <button
-        onClick={onDelete}
-        className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-background/80 hover:bg-destructive hover:text-destructive-foreground flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity"
-      >
-        <Trash2 className="h-3 w-3" />
-      </button>
+      {/* ✅ trash icon solo in modalità NONE (opzionale) */}
+      {canEditTables && editMode === 'NONE' && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onDeleteIcon();
+          }}
+          className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-background/80 hover:bg-destructive hover:text-destructive-foreground flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity"
+        >
+          <Trash2 className="h-3 w-3" />
+        </button>
+      )}
     </div>
   );
 }
 
-function TablePaletteItem({ capacity, disabled }: { capacity: number; disabled?: boolean }) {
+function DraggableReservation({ reservation, disabled }: { reservation: UILayoutReservation; disabled?: boolean }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
-    id: `palette-${capacity}`,
-    data: { type: 'new-table', capacity } as DragDataNewTable,
+    id: `reservation-${reservation.nome}`,
+    data: { type: 'reservation', name: reservation.nome } as DragDataReservation,
     disabled: !!disabled,
   });
 
   return (
-  <div
-    ref={setNodeRef}
-    {...(!disabled ? listeners : {})}
-    {...(!disabled ? attributes : {})}
-    style={{
-      touchAction: 'none',          // ✅ fondamentale: stabilizza dnd su touch
-      WebkitUserSelect: 'none',
-      userSelect: 'none',
-      WebkitTouchCallout: 'none',
-    }}
-    className={cn(
-      'flex items-center gap-3 p-3 rounded-lg bg-secondary/50',
-      disabled ? 'cursor-not-allowed opacity-50' : 'cursor-grab hover:bg-secondary',
-      'transition-colors',
-      isDragging && 'opacity-50'
-    )}
-  >
-
-      <GripVertical className="h-4 w-4 text-muted-foreground" />
-      <div className="w-8 h-8 rounded-md bg-primary/10 flex items-center justify-center">
-        <Users className="h-4 w-4 text-primary" />
-      </div>
-      <span className="text-sm font-medium">Tavolo</span>
-    </div>
-  );
-}
-
-function DraggableReservation({ reservation }: { reservation: UILayoutReservation }) {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
-    id: `reservation-${reservation.nome}`,
-    data: { type: 'reservation', name: reservation.nome } as DragDataReservation,
-  });
-
-  return (
-  <div
-    ref={setNodeRef}
-    {...listeners}
-    {...attributes}
-    style={{
-      touchAction: 'none',          // ✅ stabilizza anche qui
-      WebkitUserSelect: 'none',
-      userSelect: 'none',
-      WebkitTouchCallout: 'none',
-    }}
-    className={cn(
-      'flex items-center gap-3 p-3 rounded-lg bg-secondary/50 cursor-grab',
-      'hover:bg-secondary transition-colors',
-      isDragging && 'opacity-50'
-    )}
-  >
-
+    <div
+      ref={setNodeRef}
+      {...(!disabled ? listeners : {})}
+      {...(!disabled ? attributes : {})}
+      style={{
+        touchAction: 'none',
+        WebkitUserSelect: 'none',
+        userSelect: 'none',
+        WebkitTouchCallout: 'none',
+      }}
+      className={cn(
+        'flex items-center gap-3 p-3 rounded-lg bg-secondary/50',
+        disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-grab hover:bg-secondary',
+        'transition-colors',
+        isDragging && 'opacity-50'
+      )}
+    >
       <GripVertical className="h-4 w-4 text-muted-foreground" />
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium truncate">{reservation.nome}</p>
