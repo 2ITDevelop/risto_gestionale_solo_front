@@ -13,7 +13,7 @@ import {
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
-import { GripVertical, Trash2, Users } from 'lucide-react';
+import {Trash2, Users, Receipt } from 'lucide-react';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Slider } from '@/components/ui/slider';
@@ -675,12 +675,16 @@ const sensors = useSensors(isMobile ? touchSensor : pointerSensor);
 
       {/* Drag Overlay */}
       <DragOverlay>
-        {activeId && activeId.startsWith('reservation-') && (
-          <div style={{ pointerEvents: 'none' }} className="p-2 rounded-lg bg-primary text-primary-foreground shadow-lg">
-            {activeId.replace('reservation-', '')}
-          </div>
-        )}
-      </DragOverlay>
+  {activeId && activeId.startsWith('reservation-') && (
+    <div
+      style={{ pointerEvents: 'none' }}
+      className="h-11 w-11 rounded-xl bg-primary text-primary-foreground shadow-lg grid place-items-center"
+    >
+      <Receipt className="h-5 w-5" />
+    </div>
+  )}
+</DragOverlay>
+
 
       {/* Delete Confirmation */}
       <AlertDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
@@ -827,7 +831,6 @@ function GridCell({
     </div>
   );
 }
-
 function DraggableReservation({ reservation, disabled }: { reservation: UILayoutReservation; disabled?: boolean }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `reservation-${reservation.nome}`,
@@ -836,28 +839,50 @@ function DraggableReservation({ reservation, disabled }: { reservation: UILayout
   });
 
   return (
-    <div
-      ref={setNodeRef}
-      {...(!disabled ? listeners : {})}
-      {...(!disabled ? attributes : {})}
-      style={{
-        touchAction: 'none',
-        WebkitUserSelect: 'none',
-        userSelect: 'none',
-        WebkitTouchCallout: 'none',
-      }}
-      className={cn(
-        'flex items-center gap-3 p-3 rounded-lg bg-secondary/50',
-        disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-grab hover:bg-secondary',
-        'transition-colors',
-        isDragging && 'opacity-50'
-      )}
-    >
-      <GripVertical className="h-4 w-4 text-muted-foreground" />
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium truncate">{reservation.nome}</p>
-        {typeof reservation.numeroPosti === 'number' && <p className="text-xs text-muted-foreground">{reservation.numeroPosti} persone</p>}
+    <div className={cn('flex items-center gap-2', disabled && 'opacity-60')}>
+      {/* CARD: solo display, non draggable */}
+      <div
+        className={cn(
+          'flex-1 min-w-0 flex items-center gap-3 p-3 rounded-lg',
+          'bg-secondary/50 border border-border/40',
+          'transition-colors',
+          !disabled && 'hover:bg-secondary/70',
+          isDragging && 'opacity-60'
+        )}
+      >
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium truncate">{reservation.nome}</p>
+          {typeof reservation.numeroPosti === 'number' && (
+            <p className="text-xs text-muted-foreground">{reservation.numeroPosti} persone</p>
+          )}
+        </div>
       </div>
+
+      {/* ✅ BOTTONE DRAG SEPARATO: hitbox precisa */}
+      <button
+        ref={setNodeRef}
+        type="button"
+        aria-label="Trascina prenotazione sul tavolo"
+        disabled={!!disabled}
+        {...(!disabled ? listeners : {})}
+        {...(!disabled ? attributes : {})}
+        style={{
+          touchAction: 'none',
+          WebkitUserSelect: 'none',
+          userSelect: 'none',
+          WebkitTouchCallout: 'none',
+        }}
+        className={cn(
+          'shrink-0 h-11 w-11 rounded-xl grid place-items-center',
+          'border border-border/40 bg-background/70 shadow-sm',
+          disabled ? 'cursor-not-allowed' : 'cursor-grab active:cursor-grabbing hover:bg-background',
+          'transition'
+        )}
+      >
+        <Receipt className="h-5 w-5 text-muted-foreground" />
+      </button>
     </div>
   );
 }
+
+
