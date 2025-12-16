@@ -652,14 +652,15 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
     padding: PAD,
     minHeight: `calc(${viewportH}px - ${PAD * 2}px)`,
     display: 'flex',
-    justifyContent: 'center', // ✅ centraggio orizzontale corretto
+    justifyContent: 'flex-start', // ✅ centraggio orizzontale corretto
     alignItems: 'center',     // ✅ centraggio verticale
   }}
 >
 
                       <div
   className="rounded-lg border-2 border-dashed border-border bg-secondary/20 p-2 shrink-0"
-  style={{ display: 'inline-block' }}
+  style={{ display: 'inline-block', marginLeft: 'auto',
+    marginRight: 'auto', }}
 >
 
   <div
