@@ -10,6 +10,7 @@ import {
   TouchSensor,
   useSensor,
   useSensors,
+  closestCenter, 
 } from '@dnd-kit/core';
 import { GripVertical, Trash2, Users } from 'lucide-react';
 
@@ -473,7 +474,7 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
     editMode === 'NONE' ? 'Normale' : editMode === 'ADD' ? 'Aggiungi tavoli' : 'Elimina tavoli';
 
   return (
-    <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
       <div className="grid lg:grid-cols-[1fr,300px] gap-6">
         <Card className="glass-card min-w-0">
           <CardHeader className="pb-3">
@@ -586,7 +587,7 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
                   onTouchCancel={handleTouchEndPinch}
                   style={{
                     WebkitOverflowScrolling: 'touch',
-                    touchAction: 'manipulation',
+                    touchAction: activeId ? 'none' : 'manipulation', 
                     height: `${viewportH}px`,
                   }}
                 >
@@ -692,7 +693,7 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
       {/* Drag Overlay */}
       <DragOverlay>
         {activeId && activeId.startsWith('reservation-') && (
-          <div className="p-2 rounded-lg bg-primary text-primary-foreground shadow-lg">
+          <div style={{ pointerEvents: 'none' }} className="p-2 rounded-lg bg-primary text-primary-foreground shadow-lg">
             {activeId.replace('reservation-', '')}
           </div>
         )}
