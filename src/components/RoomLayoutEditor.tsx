@@ -1,5 +1,6 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
+  CollisionDetection,
   DndContext,
   DragEndEvent,
   DragOverlay,
@@ -13,7 +14,7 @@ import {
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
-import {Trash2, Users, Receipt } from 'lucide-react';
+import { Receipt, Trash2, Users } from 'lucide-react';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Slider } from '@/components/ui/slider';
@@ -22,7 +23,7 @@ import { PageLoader } from '@/components/LoadingSpinner';
 import { ErrorDisplay } from '@/components/ErrorDisplay';
 
 import { useAssignReservation, useCreateTables, useDeleteTable, useTables } from '@/hooks/use-sala';
-import { useReservationsByDate } from '@/hooks/use-reservations';
+import { useReservationsByDate, useReservation } from '@/hooks/use-reservations';
 
 import type { Reservation, Sala, TableStatus, Tavolo, TipoZona, Turno } from '@/types';
 
@@ -38,6 +39,8 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+
 /* ======================
    Tipi FE
    ====================== */
@@ -45,7 +48,12 @@ import {
 type UILayoutReservation = Reservation & {
   turno?: Turno;
   tavoloAssegnato?: boolean;
+
+  // compat: nel tuo vecchio UI usavi numeroPosti, ma il backend ha numPersone
   numeroPosti?: number;
+
+  // ✅ placeholder per il futuro (oggi non arriva dal backend)
+  note?: string;
 };
 
 type UILayoutTavolo = Tavolo & {
@@ -57,7 +65,7 @@ type UILayoutTavolo = Tavolo & {
 
 type DragDataReservation = {
   type: 'reservation';
-  name: string;
+  name: string; // nome prenotazione
 };
 
 type DragData = DragDataReservation;
@@ -127,6 +135,28 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
   const [deleteTarget, setDeleteTarget] = useState<{ x: number; y: number } | null>(null);
   const [editMode, setEditMode] = useState<EditMode>('NONE');
 
+  // ✅ dialog dettagli prenotazione
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [selectedName, setSelectedName] = useState<string>('');
+
+  const openReservationDetails = (r: UILayoutReservation) => {
+    setSelectedName(r.nome);
+    setDetailsOpen(true);
+  };
+
+  const closeReservationDetails = () => {
+    setDetailsOpen(false);
+    // non resetto selectedName subito, così il dialog non “sfarfalla” durante close animation
+    // se vuoi pulire: setSelectedName('');
+  };
+
+  // fetch dettaglio (solo quando dialog è aperto e ho nome)
+  const {
+    data: reservationDetails,
+    isLoading: detailsLoading,
+    error: detailsError,
+  } = useReservation(date, selectedName);
+
   const pinchRafRef = useRef<number | null>(null);
   const pinchPendingZoomRef = useRef<number | null>(null);
 
@@ -144,10 +174,17 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
   const assignReservation = useAssignReservation();
 
   const unassignedReservations = useMemo<UILayoutReservation[]>(() => {
-    if (!reservations) return [];
-    const list = reservations as UILayoutReservation[];
-    return list.filter((r) => getTurnoFromOrario(r.orario) === turno && !r.tavoloAssegnato);
-  }, [reservations, turno]);
+  if (!reservations) return [];
+  const list = reservations as Reservation[];
+
+  return list
+    .filter((r) => getTurnoFromOrario(r.orario) === turno /* && !r.tavoloAssegnato */)
+    .map((r) => ({
+      ...r,
+      numeroPosti: r.numPersone,
+    }));
+}, [reservations, turno]);
+
 
   const { width, height } = useMemo(() => getSalaSize(sala), [sala]);
 
@@ -173,6 +210,28 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
   const layoutKey = `${sala.nome}-${date}-${turno}`;
   const gridViewportRef = useRef<HTMLDivElement | null>(null);
 
+    const guardedCollisionDetection: CollisionDetection = (args) => {
+    const viewport = gridViewportRef.current;
+    if (!viewport) return [];
+
+    const coords = args.pointerCoordinates;
+    if (!coords) return [];
+
+    const rect = viewport.getBoundingClientRect();
+    const inside =
+      coords.x >= rect.left &&
+      coords.x <= rect.right &&
+      coords.y >= rect.top &&
+      coords.y <= rect.bottom;
+
+    // 🚫 fuori dal viewport della griglia => niente collisione, niente "isOver"
+    if (!inside) return [];
+
+    // ✅ dentro => collisione normale
+    return closestCenter(args);
+  };
+
+
   const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {
     const mq = window.matchMedia('(pointer: coarse)');
@@ -188,7 +247,6 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
 
   const [zoom, setZoom] = useState(1);
 
-  // ===== Pinch-to-zoom (2 dita) =====
   type TouchPoint = { clientX: number; clientY: number };
 
   const pinchStartDistRef = useRef<number | null>(null);
@@ -213,9 +271,7 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
   };
 
   const handleTouchMovePinch = (e: React.TouchEvent<HTMLDivElement>) => {
-    // mentre trascini una prenotazione, non pinchare
     if (activeId) return;
-
     if (e.touches.length !== 2) return;
     if (pinchStartDistRef.current == null) return;
 
@@ -331,25 +387,22 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
   useLayoutEffect(() => {
     const el = gridViewportRef.current;
     if (!el) return;
-    void el.offsetHeight; // force reflow iOS
+    void el.offsetHeight;
   }, [cellSize, width, height]);
 
   /* ======================
-     ✅ DND: sensori stabili per mobile
+     ✅ DND sensors (hook-safe)
      ====================== */
 
-  // ✅ crea SEMPRE entrambi i sensor hooks (ordine fisso)
-const touchSensor = useSensor(TouchSensor, {
-  activationConstraint: { delay: 150, tolerance: 10 },
-});
+  const touchSensor = useSensor(TouchSensor, {
+    activationConstraint: { delay: 150, tolerance: 10 },
+  });
 
-const pointerSensor = useSensor(PointerSensor, {
-  activationConstraint: { distance: 6 },
-});
+  const pointerSensor = useSensor(PointerSensor, {
+    activationConstraint: { distance: 6 },
+  });
 
-// ✅ poi scegli quale passare a useSensors (NON è una hook call condizionale)
-const sensors = useSensors(isMobile ? touchSensor : pointerSensor);
-
+  const sensors = useSensors(isMobile ? touchSensor : pointerSensor);
 
   /* ======================
      Tap-to-add / Tap-to-delete
@@ -397,6 +450,7 @@ const sensors = useSensors(isMobile ? touchSensor : pointerSensor);
     if (!over) return;
 
     const overId = String(over.id);
+    if (!overId.startsWith('table-')) return;
     const dragData = active.data.current as DragData | undefined;
     if (!dragData) return;
 
@@ -465,249 +519,336 @@ const sensors = useSensors(isMobile ? touchSensor : pointerSensor);
 
   const modeLabel = editMode === 'NONE' ? 'Normale' : editMode === 'ADD' ? 'Aggiungi tavoli' : 'Elimina tavoli';
 
-  return (
-    <DndContext
-      sensors={sensors}
-      collisionDetection={closestCenter}
-      measuring={{ droppable: { strategy: MeasuringStrategy.Always } }} // ✅ stabile con scroll/zoom mobile
-      onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
-    >
-      <div className="grid lg:grid-cols-[1fr,300px] gap-6">
-        <Card className="glass-card min-w-0">
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle>{sala.nome}</CardTitle>
-                <CardDescription>
-                  {tables?.length || 0} tavoli · {width}x{height} griglia
-                  <span className="ml-2 text-xs text-muted-foreground">· zoom {zoom.toFixed(2)}x</span>
-                  <span className="ml-2 text-xs text-muted-foreground">· modalità: {modeLabel}</span>
-                </CardDescription>
-              </div>
+  // usa i dettagli se disponibili, altrimenti fallback al nome selezionato
+  const dialogTitle = reservationDetails?.nome ?? selectedName ?? 'Prenotazione';
 
-              <div className="flex flex-col items-end gap-1 text-xs">
-                <div className="flex items-center gap-3 text-sm">
-                  <div className="flex items-center gap-2">
-                    <StatusDot status="LIBERO" />
-                    <span className="text-muted-foreground">Libero</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <StatusDot status="RISERVATO" />
-                    <span className="text-muted-foreground">Riservato</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <StatusDot status="OCCUPATO" />
-                    <span className="text-muted-foreground">Occupato</span>
-                  </div>
+  return (
+    <>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={guardedCollisionDetection}
+        measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+      >
+        <div className="grid lg:grid-cols-[1fr,300px] gap-6">
+          <Card className="glass-card min-w-0">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>{sala.nome}</CardTitle>
+                  <CardDescription>
+                    {tables?.length || 0} tavoli · {width}x{height} griglia
+                    <span className="ml-2 text-xs text-muted-foreground">· zoom {zoom.toFixed(2)}x</span>
+                    <span className="ml-2 text-xs text-muted-foreground">· modalità: {modeLabel}</span>
+                  </CardDescription>
                 </div>
 
-                {!canEditTables && (
-                  <span className="text-[11px] text-amber-600">
-                    Configurazione non attiva: crea/attiva la configurazione per questa data e turno per posizionare i
-                    tavoli.
+                <div className="flex flex-col items-end gap-1 text-xs">
+                  <div className="flex items-center gap-3 text-sm">
+                    <div className="flex items-center gap-2">
+                      <StatusDot status="LIBERO" />
+                      <span className="text-muted-foreground">Libero</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <StatusDot status="RISERVATO" />
+                      <span className="text-muted-foreground">Riservato</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <StatusDot status="OCCUPATO" />
+                      <span className="text-muted-foreground">Occupato</span>
+                    </div>
+                  </div>
+
+                  {!canEditTables && (
+                    <span className="text-[11px] text-amber-600">
+                      Configurazione non attiva: crea/attiva la configurazione per questa data e turno per posizionare i
+                      tavoli.
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Toolbar modalità */}
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled={!canEditTables}
+                  onClick={() => setEditMode((m) => (m === 'ADD' ? 'NONE' : 'ADD'))}
+                  className={cn(
+                    'px-3 py-1.5 rounded-md text-sm border transition-colors',
+                    !canEditTables && 'opacity-50 cursor-not-allowed',
+                    editMode === 'ADD'
+                      ? 'bg-primary text-primary-foreground border-primary'
+                      : 'bg-background hover:bg-secondary border-border'
+                  )}
+                >
+                  Aggiungi
+                </button>
+
+                <button
+                  type="button"
+                  disabled={!canEditTables}
+                  onClick={() => setEditMode((m) => (m === 'DELETE' ? 'NONE' : 'DELETE'))}
+                  className={cn(
+                    'px-3 py-1.5 rounded-md text-sm border transition-colors',
+                    !canEditTables && 'opacity-50 cursor-not-allowed',
+                    editMode === 'DELETE'
+                      ? 'bg-destructive text-destructive-foreground border-destructive'
+                      : 'bg-background hover:bg-secondary border-border'
+                  )}
+                >
+                  Elimina
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setEditMode('NONE')}
+                  className={cn(
+                    'px-3 py-1.5 rounded-md text-sm border transition-colors',
+                    'bg-background hover:bg-secondary border-border'
+                  )}
+                >
+                  Fine
+                </button>
+
+                {editMode === 'ADD' && (
+                  <span className="text-xs text-muted-foreground ml-2">
+                    Tocca una cella vivibile vuota per aggiungere un tavolo
+                  </span>
+                )}
+
+                {editMode === 'DELETE' && (
+                  <span className="text-xs text-muted-foreground ml-2">Tocca un tavolo per eliminarlo</span>
+                )}
+
+                {editMode !== 'NONE' && (
+                  <span className="text-xs text-amber-600 ml-2">
+                    In questa modalità il drag delle prenotazioni è disattivato
                   </span>
                 )}
               </div>
-            </div>
+            </CardHeader>
 
-            {/* Toolbar modalità */}
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                disabled={!canEditTables}
-                onClick={() => setEditMode((m) => (m === 'ADD' ? 'NONE' : 'ADD'))}
-                className={cn(
-                  'px-3 py-1.5 rounded-md text-sm border transition-colors',
-                  !canEditTables && 'opacity-50 cursor-not-allowed',
-                  editMode === 'ADD'
-                    ? 'bg-primary text-primary-foreground border-primary'
-                    : 'bg-background hover:bg-secondary border-border'
-                )}
-              >
-                Aggiungi
-              </button>
-
-              <button
-                type="button"
-                disabled={!canEditTables}
-                onClick={() => setEditMode((m) => (m === 'DELETE' ? 'NONE' : 'DELETE'))}
-                className={cn(
-                  'px-3 py-1.5 rounded-md text-sm border transition-colors',
-                  !canEditTables && 'opacity-50 cursor-not-allowed',
-                  editMode === 'DELETE'
-                    ? 'bg-destructive text-destructive-foreground border-destructive'
-                    : 'bg-background hover:bg-secondary border-border'
-                )}
-              >
-                Elimina
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setEditMode('NONE')}
-                className={cn('px-3 py-1.5 rounded-md text-sm border transition-colors', 'bg-background hover:bg-secondary border-border')}
-              >
-                Fine
-              </button>
-
-              {editMode === 'ADD' && (
-                <span className="text-xs text-muted-foreground ml-2">Tocca una cella vivibile vuota per aggiungere un tavolo</span>
-              )}
-
-              {editMode === 'DELETE' && (
-                <span className="text-xs text-muted-foreground ml-2">Tocca un tavolo per eliminarlo</span>
-              )}
-
-              {editMode !== 'NONE' && (
-                <span className="text-xs text-amber-600 ml-2">In questa modalità il drag delle prenotazioni è disattivato</span>
-              )}
-            </div>
-          </CardHeader>
-
-          <CardContent className="min-w-0 min-h-0">
-            <div className="p-4 rounded-lg bg-secondary/30 w-full min-w-0 min-h-0">
-              <div className="min-w-0 min-h-0">
-                <div
-                  key={layoutKey}
-                  ref={gridViewportRef}
-                  className="rounded-md w-full min-w-0 overflow-auto"
-                  onTouchStart={handleTouchStartPinch}
-                  onTouchMove={handleTouchMovePinch}
-                  onTouchEnd={handleTouchEndPinch}
-                  onTouchCancel={handleTouchEndPinch}
-                  style={{
-                    WebkitOverflowScrolling: 'touch',
-                    touchAction: activeId ? 'none' : 'manipulation', // ✅ durante drag, niente gesture native
-                    height: `${viewportH}px`,
-                  }}
-                >
+            <CardContent className="min-w-0 min-h-0">
+              <div className="p-4 rounded-lg bg-secondary/30 w-full min-w-0 min-h-0">
+                <div className="min-w-0 min-h-0">
                   <div
-                    style={{
-                      padding: PAD,
-                      width: 'max-content',
-                      margin: '0 auto',
-                      minHeight: `calc(${viewportH}px - ${PAD * 2}px)`,
-                      display: 'flex',
-                      alignItems: 'center',
-                    }}
-                  >
+  key={layoutKey}
+  ref={gridViewportRef}
+  className="rounded-xl w-full min-w-0 overflow-auto border-2 border-border bg-background/40 shadow-sm"
+  onTouchStart={handleTouchStartPinch}
+  onTouchMove={handleTouchMovePinch}
+  onTouchEnd={handleTouchEndPinch}
+  onTouchCancel={handleTouchEndPinch}
+  style={{
+    WebkitOverflowScrolling: 'touch',
+    touchAction: activeId ? 'none' : 'manipulation',
+    height: `${viewportH}px`,
+  }}
+>
                     <div
-                      className="grid gap-[2px]"
                       style={{
-                        gridTemplateColumns: `repeat(${width}, ${cellSize}px)`,
-                        gridAutoRows: `${cellSize}px`,
-                        width: width * cellSize + Math.max(0, width - 1) * GAP,
-                        height: height * cellSize + Math.max(0, height - 1) * GAP,
+                        padding: PAD,
+                        width: 'max-content',
+                        margin: '0 auto',
+                        minHeight: `calc(${viewportH}px - ${PAD * 2}px)`,
+                        display: 'flex',
+                        alignItems: 'center',
                       }}
                     >
-                      {gridCells.map(({ x, y, tipoZona }) => {
-                        const table = getTableAt(x, y);
+                      <div
+  className="rounded-lg border-2 border-dashed border-border bg-secondary/20 p-2"
+  style={{
+    width: width * cellSize + Math.max(0, width - 1) * GAP + 8,   // + padding p-2
+    height: height * cellSize + Math.max(0, height - 1) * GAP + 8,
+  }}
+>
+  <div
+    className="grid gap-[2px]"
+    style={{
+      gridTemplateColumns: `repeat(${width}, ${cellSize}px)`,
+      gridAutoRows: `${cellSize}px`,
+      width: width * cellSize + Math.max(0, width - 1) * GAP,
+      height: height * cellSize + Math.max(0, height - 1) * GAP,
+    }}
+  >
+    {gridCells.map(({ x, y, tipoZona }) => {
+      const table = getTableAt(x, y);
 
-                        const neighbors = table
-                          ? {
-                              left: !!getTableAt(x - 1, y),
-                              right: !!getTableAt(x + 1, y),
-                              up: !!getTableAt(x, y - 1),
-                              down: !!getTableAt(x, y + 1),
-                            }
-                          : undefined;
+      const neighbors = table
+        ? {
+            left: !!getTableAt(x - 1, y),
+            right: !!getTableAt(x + 1, y),
+            up: !!getTableAt(x, y - 1),
+            down: !!getTableAt(x, y + 1),
+          }
+        : undefined;
 
-                        return (
-                          <GridCell
-                            key={`${x}-${y}`}
-                            x={x}
-                            y={y}
-                            table={table}
-                            tipoZona={tipoZona}
-                            neighbors={neighbors}
-                            cellSize={cellSize}
-                            contentScale={contentScale}
-                            editMode={editMode}
-                            canEditTables={canEditTables}
-                            onCellTap={() => handleCellTap(x, y)}
-                            onTableTap={() => handleTableTap(x, y)}
-                            onDeleteIcon={() => setDeleteTarget({ x, y })}
-                          />
-                        );
-                      })}
+      return (
+        <GridCell
+          key={`${x}-${y}`}
+          x={x}
+          y={y}
+          table={table}
+          tipoZona={tipoZona}
+          neighbors={neighbors}
+          cellSize={cellSize}
+          contentScale={contentScale}
+          editMode={editMode}
+          canEditTables={canEditTables}
+          onCellTap={() => handleCellTap(x, y)}
+          onTableTap={() => handleTableTap(x, y)}
+          onDeleteIcon={() => setDeleteTarget({ x, y })}
+        />
+      );
+    })}
+  </div>
+</div>
+
                     </div>
                   </div>
+
+                  <div className="mt-3 flex items-center gap-3">
+                    <span className="text-[11px] text-muted-foreground w-10">0.5x</span>
+
+                    <Slider value={[zoom]} min={0.5} max={3.5} step={0.05} onValueChange={(v) => setZoom(v[0] ?? 1)} />
+
+                    <span className="text-[11px] text-muted-foreground w-10 text-right">3.5x</span>
+
+                    <button
+                      type="button"
+                      className="ml-2 text-[11px] text-muted-foreground hover:text-foreground"
+                      onClick={() => setZoom(1)}
+                    >
+                      reset
+                    </button>
+                  </div>
                 </div>
+              </div>
+            </CardContent>
+          </Card>
 
-                <div className="mt-3 flex items-center gap-3">
-                  <span className="text-[11px] text-muted-foreground w-10">0.5x</span>
+          {/* Sidebar */}
+          <div className="space-y-4">
+            <Card className="glass-card">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">Prenotazioni da Assegnare</CardTitle>
+                <CardDescription>{unassignedReservations.length} in attesa</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {unassignedReservations.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-4">Nessuna prenotazione da assegnare</p>
+                ) : (
+                  <div className="space-y-2">
+                    {unassignedReservations.map((r, i) => (
+                      <DraggableReservation
+                        key={`${r.nome}-${i}`}
+                        reservation={r}
+                        disabled={!canEditTables || editMode !== 'NONE'}
+                        onOpenDetails={openReservationDetails}
+                      />
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </div>
 
-                  <Slider value={[zoom]} min={0.5} max={3.5} step={0.05} onValueChange={(v) => setZoom(v[0] ?? 1)} />
+        {/* Drag Overlay (solo icona) */}
+        <DragOverlay>
+          {activeId && activeId.startsWith('reservation-') && (
+            <div
+              style={{ pointerEvents: 'none' }}
+              className="h-11 w-11 rounded-xl bg-primary text-primary-foreground shadow-lg grid place-items-center"
+            >
+              <Receipt className="h-5 w-5" />
+            </div>
+          )}
+        </DragOverlay>
 
-                  <span className="text-[11px] text-muted-foreground w-10 text-right">3.5x</span>
+        {/* Delete Confirmation */}
+        <AlertDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Eliminare il tavolo?</AlertDialogTitle>
+              <AlertDialogDescription>Questa azione rimuoverà il tavolo dalla posizione selezionata.</AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Annulla</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleDeleteTable}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                Elimina
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </DndContext>
 
-                  <button type="button" className="ml-2 text-[11px] text-muted-foreground hover:text-foreground" onClick={() => setZoom(1)}>
-                    reset
-                  </button>
+      {/* ======================
+          Dialog Dettagli Prenotazione
+         ====================== */}
+      <Dialog open={detailsOpen} onOpenChange={(o) => (o ? setDetailsOpen(true) : closeReservationDetails())}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{dialogTitle}</DialogTitle>
+          </DialogHeader>
+
+          {detailsLoading && <p className="text-sm text-muted-foreground">Caricamento dettagli...</p>}
+
+          {detailsError && (
+            <p className="text-sm text-destructive">Impossibile caricare i dettagli della prenotazione.</p>
+          )}
+
+          {!detailsLoading && !detailsError && (
+            <div className="space-y-3 text-sm">
+              <Row label="Data" value={reservationDetails?.date ?? date} />
+              <Row label="Orario" value={reservationDetails?.orario ?? '-'} />
+              <Row label="Turno" value={getTurnoFromOrario(reservationDetails?.orario)} />
+
+              <Row
+                label="Persone"
+                value={
+                  typeof reservationDetails?.numPersone === 'number'
+                    ? String(reservationDetails.numPersone)
+                    : '-'
+                }
+              />
+
+              <Row label="Telefono" value={reservationDetails?.numeroTelefono ?? '-'} />
+
+              {/* ✅ placeholder NOTE (oggi non esiste nel type backend) */}
+              <div className="pt-1">
+                <div className="text-muted-foreground mb-1">Note</div>
+                <div className="rounded-md border border-border/40 bg-secondary/30 p-2 min-h-[44px]">
+                  <span className="text-muted-foreground">
+                    Nessuna nota (campo disponibile a breve)
+                  </span>
                 </div>
               </div>
             </div>
-          </CardContent>
-        </Card>
-
-        {/* Sidebar */}
-        <div className="space-y-4">
-          <Card className="glass-card">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">Prenotazioni da Assegnare</CardTitle>
-              <CardDescription>{unassignedReservations.length} in attesa</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {unassignedReservations.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-4">Nessuna prenotazione da assegnare</p>
-              ) : (
-                <div className="space-y-2">
-                  {unassignedReservations.map((r, i) => (
-                    <DraggableReservation key={`${r.nome}-${i}`} reservation={r} disabled={!canEditTables || editMode !== 'NONE'} />
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-
-      {/* Drag Overlay */}
-      <DragOverlay>
-  {activeId && activeId.startsWith('reservation-') && (
-    <div
-      style={{ pointerEvents: 'none' }}
-      className="h-11 w-11 rounded-xl bg-primary text-primary-foreground shadow-lg grid place-items-center"
-    >
-      <Receipt className="h-5 w-5" />
-    </div>
-  )}
-</DragOverlay>
-
-
-      {/* Delete Confirmation */}
-      <AlertDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Eliminare il tavolo?</AlertDialogTitle>
-            <AlertDialogDescription>Questa azione rimuoverà il tavolo dalla posizione selezionata.</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Annulla</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDeleteTable} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              Elimina
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </DndContext>
+          )}
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
 /* ======================
    Components
    ====================== */
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="font-medium">{value}</span>
+    </div>
+  );
+}
 
 interface CellNeighbors {
   left: boolean;
@@ -805,16 +946,21 @@ function GridCell({
         neighbors?.left && 'border-l-0 rounded-l-none',
         neighbors?.right && 'border-r-0 rounded-r-none',
         neighbors?.up && 'border-t-0 rounded-t-none',
-        neighbors?.down && 'border-b-0 rounded-b-none',
+        neighbors?.down && 'border-b-0 rounded-t-none',
         canDeleteByTap && 'cursor-pointer'
       )}
     >
-      <div className="flex flex-col items-center justify-center leading-none" style={{ transform: `scale(${contentScale})`, transformOrigin: 'center' }}>
+      <div
+        className="flex flex-col items-center justify-center leading-none"
+        style={{ transform: `scale(${contentScale})`, transformOrigin: 'center' }}
+      >
         <Users className="h-4 w-4 mb-0.5" />
       </div>
 
       {table.nomePrenotazione && (
-        <span className="absolute bottom-0.5 text-[10px] font-medium truncate max-w-full px-1">{table.nomePrenotazione}</span>
+        <span className="absolute bottom-0.5 text-[10px] font-medium truncate max-w-full px-1">
+          {table.nomePrenotazione}
+        </span>
       )}
 
       {canEditTables && editMode === 'NONE' && (
@@ -831,34 +977,52 @@ function GridCell({
     </div>
   );
 }
-function DraggableReservation({ reservation, disabled }: { reservation: UILayoutReservation; disabled?: boolean }) {
+
+function DraggableReservation({
+  reservation,
+  disabled,
+  onOpenDetails,
+}: {
+  reservation: UILayoutReservation;
+  disabled?: boolean;
+  onOpenDetails?: (r: UILayoutReservation) => void;
+}) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `reservation-${reservation.nome}`,
     data: { type: 'reservation', name: reservation.nome } as DragDataReservation,
     disabled: !!disabled,
   });
 
+  const people =
+    typeof reservation.numPersone === 'number'
+      ? reservation.numPersone
+      : typeof reservation.numeroPosti === 'number'
+        ? reservation.numeroPosti
+        : undefined;
+
   return (
     <div className={cn('flex items-center gap-2', disabled && 'opacity-60')}>
-      {/* CARD: solo display, non draggable */}
-      <div
+      {/* CARD: cliccabile per dettagli, NON draggable */}
+      <button
+        type="button"
+        onClick={() => !disabled && onOpenDetails?.(reservation)}
         className={cn(
-          'flex-1 min-w-0 flex items-center gap-3 p-3 rounded-lg',
+          'flex-1 min-w-0 flex items-center gap-3 p-3 rounded-lg text-left',
           'bg-secondary/50 border border-border/40',
           'transition-colors',
-          !disabled && 'hover:bg-secondary/70',
+          !disabled ? 'hover:bg-secondary/70 cursor-pointer' : 'cursor-not-allowed',
           isDragging && 'opacity-60'
         )}
       >
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium truncate">{reservation.nome}</p>
-          {typeof reservation.numeroPosti === 'number' && (
-            <p className="text-xs text-muted-foreground">{reservation.numeroPosti} persone</p>
-          )}
+          <p className="text-xs text-muted-foreground">
+            {reservation.orario} · {typeof people === 'number' ? `${people} persone` : 'persone: -'}
+          </p>
         </div>
-      </div>
+      </button>
 
-      {/* ✅ BOTTONE DRAG SEPARATO: hitbox precisa */}
+      {/* ✅ DRAG BUTTON separato */}
       <button
         ref={setNodeRef}
         type="button"
@@ -884,5 +1048,3 @@ function DraggableReservation({ reservation, disabled }: { reservation: UILayout
     </div>
   );
 }
-
-
