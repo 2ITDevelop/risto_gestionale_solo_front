@@ -1,16 +1,20 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Save } from 'lucide-react';
+
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { DatePicker } from '@/components/DatePicker';
+
 import { useCreateReservation } from '@/hooks/use-reservations';
 import { useSalas } from '@/hooks/use-sala';
 import { formatDateForApi } from '@/lib/date-utils';
+
 import type { CreateReservationDto } from '@/types';
+
 import {
   Select,
   SelectContent,
@@ -19,34 +23,53 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 
+function onlyDigits(s: string) {
+  return s.replace(/[^\d]/g, '');
+}
+
+function toIntOrNull(s: string): number | null {
+  const cleaned = onlyDigits(s);
+  if (!cleaned) return null;
+  const n = Number.parseInt(cleaned, 10);
+  return Number.isFinite(n) ? n : null;
+}
+
 export default function NewReservation() {
   const navigate = useNavigate();
   const createReservation = useCreateReservation();
   const { data: salas } = useSalas();
-  
+
+  // ✅ numeroPosti come stringa (mobile friendly)
   const [formData, setFormData] = useState({
     nome: '',
-    numeroPosti: 2,
+    numeroPosti: '2',
     data: new Date(),
     orario: '',
     telefono: '',
     note: '',
     nomeSala: '',
   });
-  
+
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  const numeroPostiNumber = useMemo(() => toIntOrNull(formData.numeroPosti), [formData.numeroPosti]);
 
   const validate = (): boolean => {
     const newErrors: Record<string, string> = {};
-    
+
     if (!formData.nome.trim()) {
       newErrors.nome = 'Il nome è obbligatorio';
     }
-    
-    if (formData.numeroPosti < 1) {
+
+    const n = numeroPostiNumber;
+    if (n == null) {
+      newErrors.numeroPosti = 'Inserisci il numero di persone';
+    } else if (n < 1) {
       newErrors.numeroPosti = 'Almeno 1 persona';
+    } else if (n > 50) {
+      newErrors.numeroPosti = 'Massimo 50 persone';
     }
-    
+
     if (!formData.data) {
       newErrors.data = 'La data è obbligatoria';
     }
@@ -54,24 +77,26 @@ export default function NewReservation() {
     if (!formData.orario.trim()) {
       newErrors.orario = "L'orario è obbligatorio";
     }
-    
+
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
     if (!validate()) return;
-    
+
+    const n = numeroPostiNumber ?? 1;
+
     const dto: CreateReservationDto = {
       nome: formData.nome.trim(),
-      numPersone: formData.numeroPosti,
-      date: formatDateForApi(formData.data),      // yyyy-MM-dd
-      orario: formData.orario,                    // HH:mm
+      numPersone: n,
+      date: formatDateForApi(formData.data), // yyyy-MM-dd
+      orario: formData.orario,               // HH:mm
       numeroTelefono: formData.telefono.trim() || undefined,
+      // note / sala sono solo UI (come avevi già)
     };
-    
+
     try {
       await createReservation.mutateAsync(dto);
       navigate('/reservations');
@@ -96,10 +121,9 @@ export default function NewReservation() {
       <Card className="glass-card">
         <CardHeader>
           <CardTitle>Dettagli Prenotazione</CardTitle>
-          <CardDescription>
-            Inserisci i dati del cliente e della prenotazione
-          </CardDescription>
+          <CardDescription>Inserisci i dati del cliente e della prenotazione</CardDescription>
         </CardHeader>
+
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-6">
             {/* Nome */}
@@ -112,31 +136,47 @@ export default function NewReservation() {
                 onChange={(e) => setFormData({ ...formData, nome: e.target.value })}
                 className={errors.nome ? 'border-destructive' : ''}
               />
-              {errors.nome && (
-                <p className="text-sm text-destructive">{errors.nome}</p>
-              )}
+              {errors.nome && <p className="text-sm text-destructive">{errors.nome}</p>}
             </div>
 
             {/* Numero Persone */}
             <div className="space-y-2">
               <Label htmlFor="numeroPosti">Numero Persone *</Label>
+
               <Input
                 id="numeroPosti"
-                type="number"
-                min={1}
-                max={50}
+                // ✅ stringa + tastierino numerico su mobile
+                inputMode="numeric"
+                pattern="[0-9]*"
+                placeholder="2"
                 value={formData.numeroPosti}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    numeroPosti: parseInt(e.target.value) || 1,
-                  })
-                }
+                onChange={(e) => {
+                  const raw = e.target.value;
+
+                  // ✅ lascia vuoto se l'utente cancella tutto
+                  if (raw === '') {
+                    setFormData({ ...formData, numeroPosti: '' });
+                    return;
+                  }
+
+                  // ✅ tieni solo cifre (evita virgole, punti, ecc)
+                  const cleaned = onlyDigits(raw);
+                  setFormData({ ...formData, numeroPosti: cleaned });
+                }}
+                onBlur={() => {
+                  // ✅ normalizza su blur: se vuoto torna "1", se 0002 -> "2"
+                  const n = toIntOrNull(formData.numeroPosti);
+                  if (n == null) {
+                    setFormData((p) => ({ ...p, numeroPosti: '1' }));
+                  } else {
+                    const clamped = Math.min(50, Math.max(1, n));
+                    setFormData((p) => ({ ...p, numeroPosti: String(clamped) }));
+                  }
+                }}
                 className={errors.numeroPosti ? 'border-destructive' : ''}
               />
-              {errors.numeroPosti && (
-                <p className="text-sm text-destructive">{errors.numeroPosti}</p>
-              )}
+
+              {errors.numeroPosti && <p className="text-sm text-destructive">{errors.numeroPosti}</p>}
             </div>
 
             {/* Data + Orario */}
@@ -148,11 +188,9 @@ export default function NewReservation() {
                   onDateChange={(d) => d && setFormData({ ...formData, data: d })}
                   className="w-full"
                 />
-                {errors.data && (
-                  <p className="text-sm text-destructive">{errors.data}</p>
-                )}
+                {errors.data && <p className="text-sm text-destructive">{errors.data}</p>}
               </div>
-              
+
               <div className="space-y-2">
                 <Label>Orario *</Label>
                 <Input
@@ -161,9 +199,7 @@ export default function NewReservation() {
                   onChange={(e) => setFormData({ ...formData, orario: e.target.value })}
                   className={errors.orario ? 'border-destructive' : ''}
                 />
-                {errors.orario && (
-                  <p className="text-sm text-destructive">{errors.orario}</p>
-                )}
+                {errors.orario && <p className="text-sm text-destructive">{errors.orario}</p>}
               </div>
             </div>
 
@@ -185,9 +221,7 @@ export default function NewReservation() {
                 <Label>Sala Preferita</Label>
                 <Select
                   value={formData.nomeSala}
-                  onValueChange={(value) =>
-                    setFormData({ ...formData, nomeSala: value })
-                  }
+                  onValueChange={(value) => setFormData({ ...formData, nomeSala: value })}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Seleziona una sala (opzionale)" />
@@ -217,19 +251,11 @@ export default function NewReservation() {
 
             {/* Actions */}
             <div className="flex gap-3 pt-4">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => navigate(-1)}
-                className="flex-1"
-              >
+              <Button type="button" variant="outline" onClick={() => navigate(-1)} className="flex-1">
                 Annulla
               </Button>
-              <Button
-                type="submit"
-                disabled={createReservation.isPending}
-                className="flex-1"
-              >
+
+              <Button type="submit" disabled={createReservation.isPending} className="flex-1">
                 <Save className="h-4 w-4 mr-2" />
                 {createReservation.isPending ? 'Salvataggio...' : 'Salva Prenotazione'}
               </Button>
