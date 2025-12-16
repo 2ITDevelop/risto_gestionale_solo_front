@@ -4,13 +4,14 @@ import {
   DragEndEvent,
   DragOverlay,
   DragStartEvent,
-  useDraggable,
-  useDroppable,
+  MeasuringStrategy,
   PointerSensor,
   TouchSensor,
+  closestCenter,
+  useDraggable,
+  useDroppable,
   useSensor,
   useSensors,
-  closestCenter, 
 } from '@dnd-kit/core';
 import { GripVertical, Trash2, Users } from 'lucide-react';
 
@@ -48,7 +49,6 @@ type UILayoutReservation = Reservation & {
 };
 
 type UILayoutTavolo = Tavolo & {
-  // ✅ un solo tipo di tavolo: niente capacity/palette
   nomePrenotazione?: string;
   nomeSala?: string;
   turno?: Turno;
@@ -167,7 +167,7 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
   };
 
   /* ======================
-     ✅ Zoom reale + FIT 1x + scroll mobile non limitato
+     Zoom reale + FIT 1x + scroll mobile non limitato
      ====================== */
 
   const layoutKey = `${sala.nome}-${date}-${turno}`;
@@ -228,7 +228,6 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
     const scale = d / startD;
     const nextZoom = clampZoom(pinchStartZoomRef.current * scale);
 
-    // ✅ aggiorna al massimo 1 volta per frame
     pinchPendingZoomRef.current = nextZoom;
 
     if (pinchRafRef.current == null) {
@@ -260,16 +259,12 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
     return clamp(vh, 280, 720);
   }, [isMobile]);
 
-  // ✅ ZOOM REALE (NO transform sulla griglia)
   const cellSize = useMemo(() => Math.round(baseCell * zoom), [baseCell, zoom]);
-
-  // scala solo l’icona/testo
   const contentScale = useMemo(() => clamp(cellSize / 40, 0.45, 1), [cellSize]);
 
-  // reset “hard” su cambio sala/date/turno
   useEffect(() => {
     setZoom(1);
-    setEditMode('NONE'); // ✅ reset modalità su cambio contesto
+    setEditMode('NONE');
     const el = gridViewportRef.current;
     if (el) {
       el.scrollLeft = 0;
@@ -282,16 +277,13 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
     if (!el) return;
 
     const onTouchMove = (ev: TouchEvent) => {
-      if (ev.touches.length === 2) {
-        ev.preventDefault();
-      }
+      if (ev.touches.length === 2) ev.preventDefault();
     };
 
     el.addEventListener('touchmove', onTouchMove, { passive: false });
     return () => el.removeEventListener('touchmove', onTouchMove);
   }, []);
 
-  // ✅ FIT: calcola baseCell per far entrare tutta la sala a zoom=1
   useLayoutEffect(() => {
     const el = gridViewportRef.current;
     if (!el) return;
@@ -336,25 +328,28 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
     };
   }, [layoutKey, width, height, viewportH]);
 
-  // ✅ Workaround iOS: forza ricalcolo area scrollabile quando cambia la dimensione reale
   useLayoutEffect(() => {
     const el = gridViewportRef.current;
     if (!el) return;
-    void el.offsetHeight; // force reflow
+    void el.offsetHeight; // force reflow iOS
   }, [cellSize, width, height]);
 
   /* ======================
-     ✅ FIX MOBILE: sensors per evitare conflitto scroll vs drag
+     ✅ DND: sensori stabili per mobile
      ====================== */
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: { distance: 6 },
-    }),
-    useSensor(TouchSensor, {
-      activationConstraint: { delay: 320, tolerance: 4 },
-    })
-  );
+  // ✅ crea SEMPRE entrambi i sensor hooks (ordine fisso)
+const touchSensor = useSensor(TouchSensor, {
+  activationConstraint: { delay: 150, tolerance: 10 },
+});
+
+const pointerSensor = useSensor(PointerSensor, {
+  activationConstraint: { distance: 6 },
+});
+
+// ✅ poi scegli quale passare a useSensors (NON è una hook call condizionale)
+const sensors = useSensors(isMobile ? touchSensor : pointerSensor);
+
 
   /* ======================
      Tap-to-add / Tap-to-delete
@@ -367,7 +362,6 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
     const cell = gridCells.find((c) => c.x === x && c.y === y);
     if (!cell || !isCellVivibile(cell.tipoZona)) return;
 
-    // se già presente tavolo, non fare nulla
     if (getTableAt(x, y)) return;
 
     createTables.mutate({
@@ -389,7 +383,6 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
      ====================== */
 
   const handleDragStart = (event: DragStartEvent) => {
-    // ✅ durante ADD/DELETE non trascinare prenotazioni: eviti conflitti con tap
     if (!canEditTables) return;
     if (editMode !== 'NONE') return;
     setActiveId(String(event.active.id));
@@ -470,11 +463,16 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
      Render
      ====================== */
 
-  const modeLabel =
-    editMode === 'NONE' ? 'Normale' : editMode === 'ADD' ? 'Aggiungi tavoli' : 'Elimina tavoli';
+  const modeLabel = editMode === 'NONE' ? 'Normale' : editMode === 'ADD' ? 'Aggiungi tavoli' : 'Elimina tavoli';
 
   return (
-    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      measuring={{ droppable: { strategy: MeasuringStrategy.Always } }} // ✅ stabile con scroll/zoom mobile
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+    >
       <div className="grid lg:grid-cols-[1fr,300px] gap-6">
         <Card className="glass-card min-w-0">
           <CardHeader className="pb-3">
@@ -513,7 +511,7 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
               </div>
             </div>
 
-            {/* ✅ Toolbar modalità */}
+            {/* Toolbar modalità */}
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <button
                 type="button"
@@ -548,18 +546,13 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
               <button
                 type="button"
                 onClick={() => setEditMode('NONE')}
-                className={cn(
-                  'px-3 py-1.5 rounded-md text-sm border transition-colors',
-                  'bg-background hover:bg-secondary border-border'
-                )}
+                className={cn('px-3 py-1.5 rounded-md text-sm border transition-colors', 'bg-background hover:bg-secondary border-border')}
               >
                 Fine
               </button>
 
               {editMode === 'ADD' && (
-                <span className="text-xs text-muted-foreground ml-2">
-                  Tocca una cella vivibile vuota per aggiungere un tavolo
-                </span>
+                <span className="text-xs text-muted-foreground ml-2">Tocca una cella vivibile vuota per aggiungere un tavolo</span>
               )}
 
               {editMode === 'DELETE' && (
@@ -567,9 +560,7 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
               )}
 
               {editMode !== 'NONE' && (
-                <span className="text-xs text-amber-600 ml-2">
-                  In questa modalità il drag delle prenotazioni è disattivato
-                </span>
+                <span className="text-xs text-amber-600 ml-2">In questa modalità il drag delle prenotazioni è disattivato</span>
               )}
             </div>
           </CardHeader>
@@ -587,7 +578,7 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
                   onTouchCancel={handleTouchEndPinch}
                   style={{
                     WebkitOverflowScrolling: 'touch',
-                    touchAction: activeId ? 'none' : 'manipulation', 
+                    touchAction: activeId ? 'none' : 'manipulation', // ✅ durante drag, niente gesture native
                     height: `${viewportH}px`,
                   }}
                 >
@@ -651,11 +642,7 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
 
                   <span className="text-[11px] text-muted-foreground w-10 text-right">3.5x</span>
 
-                  <button
-                    type="button"
-                    className="ml-2 text-[11px] text-muted-foreground hover:text-foreground"
-                    onClick={() => setZoom(1)}
-                  >
+                  <button type="button" className="ml-2 text-[11px] text-muted-foreground hover:text-foreground" onClick={() => setZoom(1)}>
                     reset
                   </button>
                 </div>
@@ -677,11 +664,7 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
               ) : (
                 <div className="space-y-2">
                   {unassignedReservations.map((r, i) => (
-                    <DraggableReservation
-                      key={`${r.nome}-${i}`}
-                      reservation={r}
-                      disabled={!canEditTables || editMode !== 'NONE'}
-                    />
+                    <DraggableReservation key={`${r.nome}-${i}`} reservation={r} disabled={!canEditTables || editMode !== 'NONE'} />
                   ))}
                 </div>
               )}
@@ -708,10 +691,7 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Annulla</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDeleteTable}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
+            <AlertDialogAction onClick={handleDeleteTable} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
               Elimina
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -746,8 +726,6 @@ interface GridCellProps {
 
   onCellTap: () => void;
   onTableTap: () => void;
-
-  // opzionale: iconcina trash (la teniamo, ma in DELETE basta tap sul tavolo)
   onDeleteIcon: () => void;
 }
 
@@ -774,7 +752,6 @@ function GridCell({
 
   const style: React.CSSProperties = { width: cellSize, height: cellSize };
 
-  // ✅ helper: in pinch (2 dita) non vogliamo click fantasma
   const ignoreIfMultiTouch = (e: React.TouchEvent | React.MouseEvent) => {
     if ('touches' in e && e.touches && e.touches.length >= 2) return true;
     return false;
@@ -828,20 +805,14 @@ function GridCell({
         canDeleteByTap && 'cursor-pointer'
       )}
     >
-      <div
-        className="flex flex-col items-center justify-center leading-none"
-        style={{ transform: `scale(${contentScale})`, transformOrigin: 'center' }}
-      >
+      <div className="flex flex-col items-center justify-center leading-none" style={{ transform: `scale(${contentScale})`, transformOrigin: 'center' }}>
         <Users className="h-4 w-4 mb-0.5" />
       </div>
 
       {table.nomePrenotazione && (
-        <span className="absolute bottom-0.5 text-[10px] font-medium truncate max-w-full px-1">
-          {table.nomePrenotazione}
-        </span>
+        <span className="absolute bottom-0.5 text-[10px] font-medium truncate max-w-full px-1">{table.nomePrenotazione}</span>
       )}
 
-      {/* ✅ trash icon solo in modalità NONE (opzionale) */}
       {canEditTables && editMode === 'NONE' && (
         <button
           onClick={(e) => {
@@ -885,9 +856,7 @@ function DraggableReservation({ reservation, disabled }: { reservation: UILayout
       <GripVertical className="h-4 w-4 text-muted-foreground" />
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium truncate">{reservation.nome}</p>
-        {typeof reservation.numeroPosti === 'number' && (
-          <p className="text-xs text-muted-foreground">{reservation.numeroPosti} persone</p>
-        )}
+        {typeof reservation.numeroPosti === 'number' && <p className="text-xs text-muted-foreground">{reservation.numeroPosti} persone</p>}
       </div>
     </div>
   );
