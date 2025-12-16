@@ -648,22 +648,22 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
   }}
 >
                     <div
-                      style={{
-                        padding: PAD,
-                        width: 'max-content',
-                        margin: '0 auto',
-                        minHeight: `calc(${viewportH}px - ${PAD * 2}px)`,
-                        display: 'flex',
-                        alignItems: 'center',
-                      }}
-                    >
+  style={{
+    padding: PAD,
+    minHeight: `calc(${viewportH}px - ${PAD * 2}px)`,
+    display: 'flex',
+    justifyContent: 'center', // ✅ centraggio orizzontale corretto
+    alignItems: 'center',     // ✅ centraggio verticale
+  }}
+>
+
                       <div
   className="rounded-lg border-2 border-dashed border-border bg-secondary/20 p-2"
   style={{
-    width: width * cellSize + Math.max(0, width - 1) * GAP + 8,   // + padding p-2
-    height: height * cellSize + Math.max(0, height - 1) * GAP + 8,
+    display: 'inline-block', // ✅ il bordo prende ESATTAMENTE la griglia
   }}
 >
+
   <div
     className="grid gap-[2px]"
     style={{
