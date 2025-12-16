@@ -658,10 +658,8 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
 >
 
                       <div
-  className="rounded-lg border-2 border-dashed border-border bg-secondary/20 p-2"
-  style={{
-    display: 'inline-block', // ✅ il bordo prende ESATTAMENTE la griglia
-  }}
+  className="rounded-lg border-2 border-dashed border-border bg-secondary/20 p-2 shrink-0"
+  style={{ display: 'inline-block' }}
 >
 
   <div
