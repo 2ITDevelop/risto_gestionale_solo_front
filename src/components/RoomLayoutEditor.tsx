@@ -192,9 +192,10 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
   const deleteGroupReservation = useDeleteGroupReservation();
 
   // asseganzioni note dal backend (nome prenotazione -> coords)
-  const [assignedFromBackend, setAssignedFromBackend] = useState<Map<string, { x: number; y: number }>>(new Map());
+  const [assignedFromBackend, setAssignedFromBackend] = useState<Map<string, { x: number; y: number }[]>>(new Map());
   // versione per forzare refetch assegnazioni (es. dopo nuove assign)
   const [assignmentsVersion, setAssignmentsVersion] = useState(0);
+  const [highlightedCoords, setHighlightedCoords] = useState<{ x: number; y: number }[] | null>(null);
 
   // mappa prenotazioni già assegnate (da tutti i tavoli della sala/turno/data)
   const assignedReservationNames = useMemo(() => {
@@ -209,18 +210,42 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
 
   // mappa prenotazioni -> prima coppia di coordinate dove sono assegnate
   const reservationAssignmentMap = useMemo(() => {
-    const map = new Map<string, { x: number; y: number }>();
+    const map = new Map<string, { x: number; y: number }[]>();
+
+    const addCoord = (name: string, coord: { x: number; y: number }) => {
+      const arr = map.get(name) ?? [];
+      if (!arr.some((c) => c.x === coord.x && c.y === coord.y)) arr.push(coord);
+      map.set(name, arr);
+    };
+
     tables?.forEach((t) => {
       const anyTable = t as UILayoutTavolo;
-      if (anyTable.nomePrenotazione && !map.has(anyTable.nomePrenotazione)) {
-        map.set(anyTable.nomePrenotazione, { x: t.x, y: t.y });
-      }
+      if (anyTable.nomePrenotazione) addCoord(anyTable.nomePrenotazione, { x: t.x, y: t.y });
     });
+
     assignedFromBackend.forEach((coords, name) => {
-      if (!map.has(name)) map.set(name, coords);
+      coords.forEach((c) => addCoord(name, c));
     });
+
     return map;
   }, [tables, assignedFromBackend]);
+
+  const selectedCoords = useMemo(
+    () => (selectedName ? reservationAssignmentMap.get(selectedName)?.[0] : undefined),
+    [selectedName, reservationAssignmentMap]
+  );
+
+  const highlightReservationTables = (name: string) => {
+    const coords = reservationAssignmentMap.get(name) ?? [];
+    if (coords.length === 0) return;
+    setHighlightedCoords(coords);
+    const first = coords[0];
+    const el = document.getElementById(`table-cell-${first.x}-${first.y}`);
+    el?.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+    setDetailsOpen(false);
+
+    setTimeout(() => setHighlightedCoords(null), 3000);
+  };
 
   const {
     data: groupReservations,
@@ -245,7 +270,7 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
         ...r,
         numeroPosti: r.numPersone,
         tavoloAssegnato: assignedReservationNames.has(r.nome),
-        assignedCoords: reservationAssignmentMap.get(r.nome),
+        assignedCoords: reservationAssignmentMap.get(r.nome)?.[0],
       }));
   }, [reservations, turno, assignedReservationNames, reservationAssignmentMap]);
 
@@ -258,17 +283,18 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
         return;
       }
 
-      const map = new Map<string, { x: number; y: number }>();
+      const map = new Map<string, { x: number; y: number }[]>();
 
-      const seenNames = new Set<string>();
+      const addCoord = (name: string, coord: { x: number; y: number }) => {
+        const arr = map.get(name) ?? [];
+        if (!arr.some((c) => c.x === coord.x && c.y === coord.y)) arr.push(coord);
+        map.set(name, arr);
+      };
 
       // prima passata: uso la risposta tables (nomePrenotazione)
       tables.forEach((t) => {
         const anyTable = t as UILayoutTavolo;
-        if (anyTable.nomePrenotazione && !seenNames.has(anyTable.nomePrenotazione)) {
-          seenNames.add(anyTable.nomePrenotazione);
-          map.set(anyTable.nomePrenotazione, { x: t.x, y: t.y });
-        }
+        if (anyTable.nomePrenotazione) addCoord(anyTable.nomePrenotazione, { x: t.x, y: t.y });
       });
 
       // seconda passata: chiamo le groupReservations per scoprire prenotazioni aggiuntive sul gruppo
@@ -276,14 +302,9 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
         tables.map(async (t) => {
           try {
             const res = await salaApi.getGroupReservations(sala.nome, date, turno, t.x, t.y);
-            res.forEach((p) => {
-              if (!seenNames.has(p.nome)) {
-                seenNames.add(p.nome);
-                map.set(p.nome, { x: t.x, y: t.y });
-              }
-            });
+            res.forEach((p) => addCoord(p.nome, { x: t.x, y: t.y }));
           } catch (e) {
-            // ignore error: fallback to what tables already provide
+            // ignore error: fallback a quanto già noto
           }
         })
       );
@@ -298,6 +319,11 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
       cancelled = true;
     };
   }, [tables, sala.nome, date, turno, assignmentsVersion]);
+
+  // clear highlight on unmount/layout change
+  useEffect(() => {
+    return () => setHighlightedCoords(null);
+  }, []);
 
 
   const { width, height } = useMemo(() => getSalaSize(sala), [sala]);
@@ -860,6 +886,7 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
           contentScale={contentScale}
           editMode={editMode}
           canEditTables={canEditTables}
+          highlightedCoords={highlightedCoords}
           onCellTap={() => handleCellTap(x, y)}
           onTableClick={() => handleTableClick(x, y)}
         />
@@ -1046,6 +1073,20 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
 
               <Row label="Telefono" value={reservationDetails?.numeroTelefono ?? '-'} />
 
+              <div className="pt-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Tavolo assegnato</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!selectedCoords}
+                    onClick={() => selectedName && highlightReservationTables(selectedName)}
+                  >
+                    {selectedCoords ? 'Mostra' : 'Non assegnato'}
+                  </Button>
+                </div>
+              </div>
+
               <NoteBox nota={reservationDetails?.nota} />
             </div>
           )}
@@ -1100,6 +1141,7 @@ interface GridCellProps {
 
   editMode: EditMode;
   canEditTables: boolean;
+  highlightedCoords: { x: number; y: number }[] | null;
 
   onCellTap: () => void;
   onTableClick: () => void;
@@ -1115,6 +1157,7 @@ function GridCell({
   contentScale,
   editMode,
   canEditTables,
+  highlightedCoords,
   onCellTap,
   onTableClick,
 }: GridCellProps) {
@@ -1125,7 +1168,19 @@ function GridCell({
     disabled: !table && !isVivibile,
   });
 
-  const style: React.CSSProperties = { width: cellSize, height: cellSize };
+  const isHighlighted =
+    !!table && !!highlightedCoords?.some((c) => c.x === table.x && c.y === table.y);
+
+  const style: React.CSSProperties = {
+    width: cellSize,
+    height: cellSize,
+    ...(isHighlighted
+      ? {
+          backgroundColor: '#22d3ee',
+          borderColor: '#0ea5e9',
+        }
+      : {}),
+  };
 
   const ignoreIfMultiTouch = (e: React.TouchEvent | React.MouseEvent) => {
     if ('touches' in e && e.touches && e.touches.length >= 2) return true;
@@ -1161,6 +1216,7 @@ function GridCell({
     <div
       ref={setNodeRef}
       style={style}
+      id={table ? `table-cell-${x}-${y}` : undefined}
       onClick={(e) => {
         if (ignoreIfMultiTouch(e)) return;
         onTableClick();
@@ -1168,10 +1224,11 @@ function GridCell({
       className={cn(
         'relative p-1 flex items-center justify-center transition-all overflow-hidden',
         'border-2',
-        table.stato === 'LIBERO' && 'bg-status-free/20 border-status-free',
-        table.stato === 'RISERVATO' && 'bg-status-reserved/20 border-status-reserved',
-        table.stato === 'OCCUPATO' && 'bg-status-occupied/20 border-status-occupied',
+        !isHighlighted && table.stato === 'LIBERO' && 'bg-status-free/20 border-status-free',
+        !isHighlighted && table.stato === 'RISERVATO' && 'bg-status-reserved/20 border-status-reserved',
+        !isHighlighted && table.stato === 'OCCUPATO' && 'bg-status-occupied/20 border-status-occupied',
         isOver && 'ring-2 ring-primary ring-offset-2',
+        isHighlighted && 'ring-2 ring-cyan-700 animate-[pulse_0.9s_ease-in-out_infinite]',
         neighbors?.left && 'border-l-0 rounded-l-none',
         neighbors?.right && 'border-r-0 rounded-r-none',
         neighbors?.up && 'border-t-0 rounded-t-none',
