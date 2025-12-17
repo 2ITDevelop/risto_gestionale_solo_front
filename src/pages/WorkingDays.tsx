@@ -60,6 +60,14 @@ const typeIcons: Record<WorkingDayType, LucideIcon> = {
   SPECIAL: Star,
 };
 
+const TIME_OPTIONS = Array.from({ length: 24 * 4 }, (_, idx) => {
+  const totalMinutes = idx * 15;
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(hours)}:${pad(minutes)}`;
+});
+
 // Tipo SOLO per il form della dialog
 type WorkingDayForm = {
   tipo: WorkingDayType;
@@ -71,10 +79,21 @@ type WorkingDayForm = {
   orarioChiusuraDinner?: string;
 };
 
+function formatTimeDisplay(time?: string | null): string {
+  if (!time) return '';
+  // converte "HH:mm:ss" -> "HH:mm"
+  const parts = time.split(':');
+  if (parts.length >= 2) {
+    return `${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}`;
+  }
+  return time;
+}
+
 export default function WorkingDays() {
   const [selectedType, setSelectedType] = useState<WorkingDayType | 'ALL'>('ALL');
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ type: WorkingDayType; date?: string } | null>(null);
+  const [viewTarget, setViewTarget] = useState<WorkingDay | null>(null);
   
   const { data: workingDaysRaw, isLoading, error, refetch } = useWorkingDays();
   const deleteTemplate = useDeleteTemplateWorkingDay();
@@ -201,6 +220,7 @@ export default function WorkingDays() {
                     <WorkingDayRow 
                       key={`${day.type}-${day.data || index}`} 
                       day={day}
+                      onView={() => setViewTarget(day)}
                       onDelete={() => setDeleteTarget({ type: day.type, date: day.data })}
                     />
                   ))}
@@ -216,6 +236,48 @@ export default function WorkingDays() {
         open={showCreateDialog} 
         onOpenChange={setShowCreateDialog}
       />
+
+      {/* View details */}
+      <Dialog open={!!viewTarget} onOpenChange={(open) => !open && setViewTarget(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Dettagli giorno</DialogTitle>
+            <DialogDescription>
+              {viewTarget?.type === 'SPECIAL'
+                ? `Giorno speciale - ${viewTarget?.data ? formatDateShort(viewTarget.data) : ''}`
+                : typeLabels[viewTarget?.type ?? 'WEEKDAY']}
+            </DialogDescription>
+          </DialogHeader>
+
+          {viewTarget && (
+            <div className="space-y-3">
+              <DetailRow
+                label="Pranzo"
+                active={!viewTarget.g1}
+                start={viewTarget.a1}
+                end={viewTarget.c1}
+              />
+              <DetailRow
+                label="Cena"
+                active={!viewTarget.g2}
+                start={viewTarget.a2}
+                end={viewTarget.c2}
+              />
+              {viewTarget.data && (
+                <p className="text-sm text-muted-foreground">
+                  Data: {formatDateShort(viewTarget.data)}
+                </p>
+              )}
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setViewTarget(null)}>
+              Chiudi
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Delete Confirmation */}
       <AlertDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
@@ -272,9 +334,15 @@ function FilterChip({
   );
 }
 
-function WorkingDayRow({ day, onDelete }: { day: WorkingDay; onDelete: () => void }) {
+function WorkingDayRow({ day, onDelete, onView }: { day: WorkingDay; onDelete: () => void; onView: () => void }) {
+  const lunchOpen = !day.g1;
+  const dinnerOpen = !day.g2;
   return (
-    <div className="flex items-center justify-between p-4 rounded-lg bg-secondary/30">
+    <button
+      type="button"
+      onClick={onView}
+      className="w-full text-left flex items-center justify-between p-4 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-colors"
+    >
       <div className="flex-1">
         {day.data && (
           <p className="text-sm font-medium text-primary mb-1">
@@ -288,12 +356,12 @@ function WorkingDayRow({ day, onDelete }: { day: WorkingDay; onDelete: () => voi
             <span
               className={cn(
                 "text-sm",
-                day.g1 ? "text-foreground" : "text-muted-foreground line-through"
+                lunchOpen ? "text-foreground" : "text-muted-foreground line-through"
               )}
             >
               Pranzo
             </span>
-            {day.g1 && day.a1 && day.c1 && (
+            {lunchOpen && day.a1 && day.c1 && (
               <span className="text-sm text-muted-foreground">
                 ({day.a1} - {day.c1})
               </span>
@@ -306,12 +374,12 @@ function WorkingDayRow({ day, onDelete }: { day: WorkingDay; onDelete: () => voi
             <span
               className={cn(
                 "text-sm",
-                day.g2 ? "text-foreground" : "text-muted-foreground line-through"
+                dinnerOpen ? "text-foreground" : "text-muted-foreground line-through"
               )}
             >
               Cena
             </span>
-            {day.g2 && day.a2 && day.c2 && (
+            {dinnerOpen && day.a2 && day.c2 && (
               <span className="text-sm text-muted-foreground">
                 ({day.a2} - {day.c2})
               </span>
@@ -320,21 +388,46 @@ function WorkingDayRow({ day, onDelete }: { day: WorkingDay; onDelete: () => voi
         </div>
       </div>
 
-      <Button
-        variant="ghost"
-        size="icon"
-        onClick={onDelete}
-        className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-      >
-        <Trash2 className="h-4 w-4" />
-      </Button>
+      <div className="flex items-center gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
+          className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+        >
+          <Trash2 className="h-4 w-4" />
+        </Button>
+      </div>
+    </button>
+  );
+}
+
+function DetailRow({ label, active, start, end }: { label: string; active: boolean; start?: string | null; end?: string | null }) {
+  return (
+    <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2">
+      <div className="flex items-center gap-2">
+        <span className="text-sm font-medium">{label}</span>
+        <span className={cn("text-xs px-2 py-1 rounded-full", active ? "bg-emerald-100 text-emerald-700" : "bg-muted text-muted-foreground")}>
+          {active ? 'Attivo' : 'Chiuso'}
+        </span>
+      </div>
+      {start && end ? (
+        <span className="text-sm text-muted-foreground">
+          {formatTimeDisplay(start)} - {formatTimeDisplay(end)}
+        </span>
+      ) : (
+        <span className="text-sm text-muted-foreground">Orari non impostati</span>
+      )}
     </div>
   );
 }
 
 function CreateWorkingDayDialog({ 
   open, 
-  onOpenChange 
+  onOpenChange,
 }: { 
   open: boolean; 
   onOpenChange: (open: boolean) => void;
@@ -353,11 +446,13 @@ function CreateWorkingDayDialog({
   
   const [selectedDate, setSelectedDate] = useState<Date | undefined>();
 
+
   const handleSubmit = async () => {
     const dto: CreateWorkingDayDto = {
       type: formData.tipo,
-      g1: formData.apertoLunch,
-      g2: formData.apertoDinner,
+      // backend si aspetta false = aperto, true = chiuso
+      g1: !formData.apertoLunch,
+      g2: !formData.apertoDinner,
       a1: formData.apertoLunch ? formData.orarioAperturaLunch : undefined,
       c1: formData.apertoLunch ? formData.orarioChiusuraLunch : undefined,
       a2: formData.apertoDinner ? formData.orarioAperturaDinner : undefined,
@@ -443,19 +538,39 @@ function CreateWorkingDayDialog({
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <Label className="text-xs text-muted-foreground">Apertura</Label>
-                  <Input
-                    type="time"
+                  <Select
                     value={formData.orarioAperturaLunch || ''}
-                    onChange={(e) => setFormData({ ...formData, orarioAperturaLunch: e.target.value })}
-                  />
+                    onValueChange={(v) => setFormData({ ...formData, orarioAperturaLunch: v || undefined })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Scegli orario" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {TIME_OPTIONS.map((time) => (
+                        <SelectItem key={`lunch-open-${time}`} value={time}>
+                          {time}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs text-muted-foreground">Chiusura</Label>
-                  <Input
-                    type="time"
+                  <Select
                     value={formData.orarioChiusuraLunch || ''}
-                    onChange={(e) => setFormData({ ...formData, orarioChiusuraLunch: e.target.value })}
-                  />
+                    onValueChange={(v) => setFormData({ ...formData, orarioChiusuraLunch: v || undefined })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Scegli orario" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {TIME_OPTIONS.map((time) => (
+                        <SelectItem key={`lunch-close-${time}`} value={time}>
+                          {time}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
             )}
@@ -478,19 +593,39 @@ function CreateWorkingDayDialog({
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <Label className="text-xs text-muted-foreground">Apertura</Label>
-                  <Input
-                    type="time"
+                  <Select
                     value={formData.orarioAperturaDinner || ''}
-                    onChange={(e) => setFormData({ ...formData, orarioAperturaDinner: e.target.value })}
-                  />
+                    onValueChange={(v) => setFormData({ ...formData, orarioAperturaDinner: v || undefined })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Scegli orario" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {TIME_OPTIONS.map((time) => (
+                        <SelectItem key={`dinner-open-${time}`} value={time}>
+                          {time}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs text-muted-foreground">Chiusura</Label>
-                  <Input
-                    type="time"
+                  <Select
                     value={formData.orarioChiusuraDinner || ''}
-                  onChange={(e) => setFormData({ ...formData, orarioChiusuraDinner: e.target.value })}
-                  />
+                    onValueChange={(v) => setFormData({ ...formData, orarioChiusuraDinner: v || undefined })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Scegli orario" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {TIME_OPTIONS.map((time) => (
+                        <SelectItem key={`dinner-close-${time}`} value={time}>
+                          {time}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
             )}

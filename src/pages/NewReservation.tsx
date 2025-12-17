@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Save } from 'lucide-react';
 
@@ -11,9 +11,11 @@ import { DatePicker } from '@/components/DatePicker';
 
 import { useCreateReservation } from '@/hooks/use-reservations';
 import { useSalas } from '@/hooks/use-sala';
-import { formatDateForApi } from '@/lib/date-utils';
+import { useWorkingDays } from '@/hooks/use-working-days';
+import { formatDateForApi, parseDateFromApi } from '@/lib/date-utils';
 
 import type { CreateReservationDto } from '@/types';
+import type { WorkingDay, WorkingDayType } from '@/types';
 
 import {
   Select,
@@ -34,10 +36,94 @@ function toIntOrNull(s: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function getDayTypeFromDate(date: Date): WorkingDayType {
+  const day = date.getDay();
+  if (day === 0) return 'SUNDAY';
+  if (day === 6) return 'SATURDAY';
+  return 'WEEKDAY';
+}
+
+function parseTimeToMinutes(time?: string): number | null {
+  if (!time) return null;
+  const [h, m] = time.split(':').map(Number);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
+  return h * 60 + m;
+}
+
+function formatMinutes(mins: number): string {
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+function buildSlotsFromWindow(start?: string, end?: string): string[] {
+  const startMinutes = parseTimeToMinutes(start);
+  const endMinutes = parseTimeToMinutes(end);
+  if (startMinutes == null || endMinutes == null || startMinutes > endMinutes) return [];
+
+  const slots: string[] = [];
+  for (let current = startMinutes; current <= endMinutes; current += 15) {
+    slots.push(formatMinutes(current));
+  }
+  return slots;
+}
+
+function normalizeApiDate(dateString?: string): string | null {
+  if (!dateString) return null;
+  try {
+    const parsed = parseDateFromApi(dateString);
+    return formatDateForApi(parsed);
+  } catch {
+    return null;
+  }
+}
+
+function getSpecialDay(workingDays: WorkingDay[] | undefined, date: Date): WorkingDay | null {
+  if (!Array.isArray(workingDays)) return null;
+  const dateStr = formatDateForApi(date);
+  return (
+    workingDays.find((d) => {
+      if (d.type !== 'SPECIAL') return false;
+      const normalized = normalizeApiDate(d.data);
+      return normalized === dateStr;
+    }) ?? null
+  );
+}
+
+function getTemplateDay(workingDays: WorkingDay[] | undefined, date: Date): WorkingDay | null {
+  if (!Array.isArray(workingDays)) return null;
+  const type = getDayTypeFromDate(date);
+  return workingDays.find((d) => d.type === type) ?? null;
+}
+
+function buildSlotsForDay(day: WorkingDay | null): string[] {
+  if (!day) return [];
+  const slots: string[] = [];
+
+  // backend: g1/g2 = true -> chiuso, false -> aperto
+  const lunchOpen = !day.g1;
+  const dinnerOpen = !day.g2;
+
+  if (lunchOpen && day.a1 && day.c1) {
+    slots.push(...buildSlotsFromWindow(day.a1, day.c1));
+  }
+  if (dinnerOpen && day.a2 && day.c2) {
+    slots.push(...buildSlotsFromWindow(day.a2, day.c2));
+  }
+
+  return slots;
+}
+
 export default function NewReservation() {
   const navigate = useNavigate();
   const createReservation = useCreateReservation();
   const { data: salas } = useSalas();
+  const {
+    data: workingDays,
+    isLoading: isLoadingWorkingDays,
+    error: workingDaysError,
+  } = useWorkingDays();
+  const workingDaysList = useMemo(() => (Array.isArray(workingDays) ? workingDays : []), [workingDays]);
 
   // ✅ numeroPosti come stringa (mobile friendly)
   const [formData, setFormData] = useState({
@@ -53,6 +139,39 @@ export default function NewReservation() {
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const numeroPostiNumber = useMemo(() => toIntOrNull(formData.numeroPosti), [formData.numeroPosti]);
+
+  // Risolvi il giorno da usare: prima SPECIAL, altrimenti template per weekday/sabato/domenica.
+  const specialDay = useMemo(
+    () => getSpecialDay(workingDaysList, formData.data),
+    [workingDaysList, formData.data],
+  );
+  const templateDay = useMemo(
+    () => getTemplateDay(workingDaysList, formData.data),
+    [workingDaysList, formData.data],
+  );
+  const dayConfig = specialDay ?? templateDay ?? null;
+
+  const availableSlots = useMemo(() => buildSlotsForDay(dayConfig), [dayConfig]);
+
+  const missingTimeConfig = useMemo(() => {
+    if (!dayConfig) return false;
+    const lunchOpen = !dayConfig.g1;
+    const dinnerOpen = !dayConfig.g2;
+    const missingLunch = lunchOpen && (!dayConfig.a1 || !dayConfig.c1);
+    const missingDinner = dinnerOpen && (!dayConfig.a2 || !dayConfig.c2);
+    return missingLunch || missingDinner;
+  }, [dayConfig]);
+
+  useEffect(() => {
+    if (availableSlots.length === 0) {
+      setFormData((prev) => (prev.orario ? { ...prev, orario: '' } : prev));
+      return;
+    }
+
+    if (!availableSlots.includes(formData.orario)) {
+      setFormData((prev) => ({ ...prev, orario: availableSlots[0] }));
+    }
+  }, [availableSlots, formData.orario]);
 
   const validate = (): boolean => {
     const newErrors: Record<string, string> = {};
@@ -74,8 +193,14 @@ export default function NewReservation() {
       newErrors.data = 'La data è obbligatoria';
     }
 
-    if (!formData.orario.trim()) {
+    if (availableSlots.length === 0) {
+      newErrors.orario = missingTimeConfig
+        ? 'Orari non configurati per questa data: completa apertura/chiusura in Giorni Lavorativi.'
+        : 'Nessun orario disponibile per la data scelta';
+    } else if (!formData.orario.trim()) {
       newErrors.orario = "L'orario è obbligatorio";
+    } else if (!availableSlots.includes(formData.orario)) {
+      newErrors.orario = 'Seleziona un orario disponibile';
     }
 
     setErrors(newErrors);
@@ -194,12 +319,45 @@ export default function NewReservation() {
 
               <div className="space-y-2">
                 <Label>Orario *</Label>
-                <Input
-                  type="time"
+                <Select
                   value={formData.orario}
-                  onChange={(e) => setFormData({ ...formData, orario: e.target.value })}
-                  className={errors.orario ? 'border-destructive' : ''}
-                />
+                  onValueChange={(value) => setFormData({ ...formData, orario: value })}
+                  disabled={isLoadingWorkingDays || availableSlots.length === 0 || !!workingDaysError}
+                >
+                  <SelectTrigger className={errors.orario ? 'border-destructive' : ''}>
+                    <SelectValue
+                      placeholder={
+                        isLoadingWorkingDays
+                          ? 'Caricamento...'
+                          : workingDaysError
+                            ? 'Errore caricamento orari'
+                            : 'Seleziona un orario'
+                      }
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableSlots.map((slot) => (
+                      <SelectItem key={slot} value={slot}>
+                        {slot}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {missingTimeConfig && !isLoadingWorkingDays && !workingDaysError && (
+                  <p className="text-sm text-destructive">
+                    Orari non configurati per questa data: imposta apertura/chiusura in Giorni Lavorativi.
+                  </p>
+                )}
+                {!missingTimeConfig && availableSlots.length === 0 && !isLoadingWorkingDays && !workingDaysError && (
+                  <p className="text-sm text-muted-foreground">
+                    Nessun orario disponibile per questa data.
+                  </p>
+                )}
+                {workingDaysError && (
+                  <p className="text-sm text-destructive">
+                    Impossibile caricare gli orari lavorativi.
+                  </p>
+                )}
                 {errors.orario && <p className="text-sm text-destructive">{errors.orario}</p>}
               </div>
             </div>
