@@ -22,8 +22,17 @@ export const API_ENDPOINTS = {
       `/api/sala/tavoli/${encodeURIComponent(nomeSala)}/${date}/${turno}/${x}/${y}`,
     assignReservation: (nomeSala: string, date: string, turno: string, x: number, y: number, nomePrenotazione: string) =>
       `/api/sala/tavoli/${encodeURIComponent(nomeSala)}/${date}/${turno}/${x}/${y}/assegna-prenotazione/${encodeURIComponent(nomePrenotazione)}`,
-    reservationGroups: (nomeSala: string, date: string, turno: string) =>
-      `/api/sala/tavoli/${encodeURIComponent(nomeSala)}/${date}/${turno}/prenotazioni-gruppo`,
+    groupReservationsByTable: (nomeSala: string, date: string, turno: string, x: number, y: number) =>
+      `/api/sala/tavoli/${encodeURIComponent(nomeSala)}/${date}/${turno}/${x}/${y}/prenotazioni-gruppo`,
+    deleteGroupReservation: (
+      nomeSala: string,
+      date: string,
+      turno: string,
+      x: number,
+      y: number,
+      nomePrenotazione: string
+    ) =>
+      `/api/sala/tavoli/${encodeURIComponent(nomeSala)}/${date}/${turno}/${x}/${y}/prenotazioni-gruppo/${encodeURIComponent(nomePrenotazione)}`,
     configuration: (nomeSala: string, date: string, turno: string) =>
       `/api/sala/configurazioni/${encodeURIComponent(nomeSala)}/${date}/${turno}`,
     seatGroups: (nomeSala: string, date: string, turno: string) =>

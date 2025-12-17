@@ -8,6 +8,7 @@ import type {
   SalaConfiguration,
   Turno,
   CreateSalaConfigurationDto,
+  Reservation,
 } from '@/types';
 
 export const salaApi = {
@@ -67,6 +68,29 @@ export const salaApi = {
   ): Promise<Tavolo> =>
     apiClient.post<Tavolo>(
       API_ENDPOINTS.sala.assignReservation(nomeSala, date, turno, x, y, nomePrenotazione)
+    ),
+
+  // Get reservations for a table group
+  getGroupReservations: (
+    nomeSala: string,
+    date: string,
+    turno: Turno,
+    x: number,
+    y: number
+  ): Promise<Reservation[]> =>
+    apiClient.get<Reservation[]>(API_ENDPOINTS.sala.groupReservationsByTable(nomeSala, date, turno, x, y)),
+
+  // Delete a reservation from the whole group of a table
+  deleteGroupReservation: (
+    nomeSala: string,
+    date: string,
+    turno: Turno,
+    x: number,
+    y: number,
+    nomePrenotazione: string
+  ) =>
+    apiClient.delete(
+      API_ENDPOINTS.sala.deleteGroupReservation(nomeSala, date, turno, x, y, nomePrenotazione)
     ),
 
   // Get configuration (ritorna direttamente SalaConfiguration)

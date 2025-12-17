@@ -99,6 +99,7 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
   const [zones, setZones] = useState<ZonaSala[]>(sala.zone || []);
   const [activeDrag, setActiveDrag] = useState<NewZoneConfig | null>(null);
   const [hoverCell, setHoverCell] = useState<{ x: number; y: number } | null>(null);
+  const [selectedZoneIndex, setSelectedZoneIndex] = useState<number | null>(null);
 
   // ✅ true solo se il drag è partito da touch
   const [isTouchDrag, setIsTouchDrag] = useState(false);
@@ -155,6 +156,7 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
     setActiveDrag(null);
     setHoverCell(null);
     setIsTouchDrag(false);
+    setSelectedZoneIndex(null);
   }, [open, sala.nome, sala.zone]);
 
   /* ---------- dnd-kit ---------- */
@@ -251,6 +253,12 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
 
   const handleRemoveZone = (index: number) => {
     setZones((prev) => prev.filter((_, i) => i !== index));
+    setSelectedZoneIndex((prev) => {
+      if (prev == null) return prev;
+      if (prev === index) return null;
+      if (prev > index) return prev - 1;
+      return prev;
+    });
   };
 
   const handleSave = async () => {
@@ -262,6 +270,8 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
   };
 
   /* ---------- grid ---------- */
+
+  const selectedZone = selectedZoneIndex != null ? zones[selectedZoneIndex] : null;
 
   const gridCells = useMemo(() => {
     const res: { x: number; y: number; tipoZona: TipoZona | null }[] = [];
@@ -358,17 +368,27 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
     className="grid gap-1 w-full min-w-0"
     style={{ gridTemplateColumns: `repeat(${gridWidth}, minmax(0, 1fr))` }}
   >
-    {gridCells.map((c) => (
-      <ZoneCell
-        key={`${c.x}-${c.y}`}
-        x={c.x}
-        y={c.y}
-        tipoZona={c.tipoZona}
-        ghost={activeDrag && hoverCell ? { ...activeDrag, anchor: hoverCell } : null}
-        gridWidth={gridWidth}
-        gridHeight={gridHeight}
-      />
-    ))}
+    {gridCells.map((c) => {
+      const highlighted =
+        !!selectedZone &&
+        c.x >= selectedZone.x &&
+        c.x < selectedZone.x + selectedZone.base &&
+        c.y >= selectedZone.y &&
+        c.y < selectedZone.y + selectedZone.altezza;
+
+      return (
+        <ZoneCell
+          key={`${c.x}-${c.y}`}
+          x={c.x}
+          y={c.y}
+          tipoZona={c.tipoZona}
+          ghost={activeDrag && hoverCell ? { ...activeDrag, anchor: hoverCell } : null}
+          gridWidth={gridWidth}
+          gridHeight={gridHeight}
+          highlighted={highlighted}
+        />
+      );
+    })}
   </div>
 </div>
 
@@ -445,30 +465,46 @@ export function EditZonesDialog({ sala, open, onOpenChange }: EditZonesDialogPro
                   <p className="text-xs text-muted-foreground">Nessuna zona creata.</p>
                 ) : (
                   <div className="space-y-2 max-h-56 overflow-y-auto">
-                    {zones.map((z, index) => (
-                      <div
-                        key={`${z.tipo}-${z.x}-${z.y}-${z.base}-${z.altezza}-${index}`}
-                        className="flex items-center justify-between p-2 rounded-md bg-secondary/40 text-xs"
-                      >
-                        <div className="flex flex-col">
-                          <span className="font-medium">
-                            {z.tipo === 'SPAZIO_VIVIBILE' ? 'Vivibile' : 'Non vivibile'}
-                          </span>
-                          <span className="text-muted-foreground">
-                            Posizione ({z.x}, {z.y}) · {z.base}×{z.altezza}
-                          </span>
-                        </div>
+                    {zones.map((z, index) => {
+                      const isSelected = selectedZoneIndex === index;
 
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleRemoveZone(index)}
-                          className="text-muted-foreground hover:text-destructive"
+                      return (
+                        <div
+                          key={`${z.tipo}-${z.x}-${z.y}-${z.base}-${z.altezza}-${index}`}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => setSelectedZoneIndex(index)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') setSelectedZoneIndex(index);
+                          }}
+                          className={cn(
+                            'flex items-center justify-between p-2 rounded-md bg-secondary/40 text-xs border border-transparent transition-colors',
+                            isSelected && 'border-destructive/70 ring-1 ring-destructive/60 bg-destructive/10'
+                          )}
                         >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    ))}
+                          <div className="flex flex-col">
+                            <span className="font-medium">
+                              {z.tipo === 'SPAZIO_VIVIBILE' ? 'Vivibile' : 'Non vivibile'}
+                            </span>
+                            <span className="text-muted-foreground">
+                              Posizione ({z.x}, {z.y}) · {z.base}×{z.altezza}
+                            </span>
+                          </div>
+
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleRemoveZone(index);
+                            }}
+                            className="text-muted-foreground hover:text-destructive"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </Card>
@@ -500,8 +536,9 @@ function ZoneCell(props: {
   ghost: (NewZoneConfig & { anchor: { x: number; y: number } }) | null;
   gridWidth: number;
   gridHeight: number;
+  highlighted: boolean;
 }) {
-  const { x, y, tipoZona, ghost, gridWidth, gridHeight } = props;
+  const { x, y, tipoZona, ghost, gridWidth, gridHeight, highlighted } = props;
 
   const { setNodeRef, isOver } = useDroppable({ id: `cell-${x}-${y}` });
 
@@ -530,7 +567,8 @@ function ZoneCell(props: {
         isNonVivibile && 'bg-slate-400',
         !isVivibile && !isNonVivibile && 'bg-background',
         ghostClass,
-        isOver && 'ring-2 ring-primary ring-offset-1'
+        isOver && 'ring-2 ring-primary ring-offset-1',
+        highlighted && 'ring-2 ring-destructive ring-offset-1'
       )}
     />
   );

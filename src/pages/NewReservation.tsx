@@ -46,7 +46,7 @@ export default function NewReservation() {
     data: new Date(),
     orario: '',
     telefono: '',
-    note: '',
+    nota: '',
     nomeSala: '',
   });
 
@@ -87,6 +87,7 @@ export default function NewReservation() {
     if (!validate()) return;
 
     const n = numeroPostiNumber ?? 1;
+    const noteValue = formData.nota.trim();
 
     const dto: CreateReservationDto = {
       nome: formData.nome.trim(),
@@ -94,7 +95,7 @@ export default function NewReservation() {
       date: formatDateForApi(formData.data), // yyyy-MM-dd
       orario: formData.orario,               // HH:mm
       numeroTelefono: formData.telefono.trim() || undefined,
-      // note / sala sono solo UI (come avevi già)
+      nota: noteValue || undefined,
     };
 
     try {
@@ -243,8 +244,8 @@ export default function NewReservation() {
               <Textarea
                 id="note"
                 placeholder="Allergie, preferenze, occasioni speciali..."
-                value={formData.note}
-                onChange={(e) => setFormData({ ...formData, note: e.target.value })}
+                value={formData.nota}
+                onChange={(e) => setFormData({ ...formData, nota: e.target.value })}
                 rows={3}
               />
             </div>

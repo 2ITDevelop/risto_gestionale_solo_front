@@ -8,6 +8,7 @@ import type {
   Turno,
   SalaConfiguration,
   CreateSalaConfigurationDto,
+  Reservation,
 } from '@/types';
 import { toast } from '@/hooks/use-toast';
 
@@ -38,6 +39,9 @@ export const salaKeys = {
   tables: (nomeSala: string, date: string, turno: Turno) =>
     ['sala', 'tables', nomeSala, date, turno] as const,
 
+  groupReservations: (nomeSala: string, date: string, turno: Turno, x: number, y: number) =>
+    ['sala', 'groupReservations', nomeSala, date, turno, x, y] as const,
+
   totalSeats: (nomeSala: string, date: string, turno: Turno) =>
     ['sala', 'totalSeats', nomeSala, date, turno] as const,
 
@@ -65,6 +69,21 @@ export function useTables(nomeSala: string, date: string, turno: Turno) {
     queryKey: salaKeys.tables(nomeSala, date, turno),
     queryFn: () => salaApi.getTables(nomeSala, date, turno),
     enabled: nomeSala.trim().length > 0 && date.trim().length > 0 && !!turno,
+  });
+}
+
+export function useGroupReservations(nomeSala: string, date: string, turno: Turno, x?: number, y?: number) {
+  const isEnabled =
+    nomeSala.trim().length > 0 && date.trim().length > 0 && !!turno && typeof x === 'number' && typeof y === 'number';
+
+  return useQuery<Reservation[], ApiError>({
+    queryKey: isEnabled && typeof x === 'number' && typeof y === 'number'
+      ? salaKeys.groupReservations(nomeSala, date, turno, x, y)
+      : ['sala', 'groupReservations', 'disabled'],
+    queryFn: () => salaApi.getGroupReservations(nomeSala, date, turno, x as number, y as number),
+    enabled: isEnabled,
+    refetchOnMount: true,
+    refetchOnWindowFocus: true,
   });
 }
 
@@ -228,9 +247,22 @@ export function useAssignReservation() {
     mutationFn: ({ nomeSala, date, turno, x, y, nomePrenotazione }) =>
       salaApi.assignReservation(nomeSala, date, turno, x, y, nomePrenotazione),
 
-    onSuccess: async (_updated, v) => {
+    onSuccess: async (updated, v) => {
+      // aggiorna subito la cache dei tavoli con la risposta del backend
+      queryClient.setQueryData<Tavolo[] | undefined>(salaKeys.tables(v.nomeSala, v.date, v.turno), (old) => {
+        if (!old) return old;
+        return old.map((t) =>
+          t.x === v.x && t.y === v.y
+            ? { ...t, ...updated }
+            : t
+        );
+      });
+
       await queryClient.invalidateQueries({
         queryKey: salaKeys.tables(v.nomeSala, v.date, v.turno),
+      });
+      await queryClient.invalidateQueries({
+        queryKey: salaKeys.groupReservations(v.nomeSala, v.date, v.turno, v.x, v.y),
       });
       toast({
         title: 'Prenotazione assegnata',
@@ -243,6 +275,47 @@ export function useAssignReservation() {
       toast({
         title: 'Errore',
         description: err.message || 'Impossibile assegnare la prenotazione.',
+        variant: 'destructive',
+      });
+    },
+  });
+}
+
+export function useDeleteGroupReservation() {
+  const queryClient = useQueryClient();
+
+  return useMutation<
+    void,
+    ApiError,
+    { nomeSala: string; date: string; turno: Turno; x: number; y: number; nomePrenotazione: string }
+  >({
+    mutationFn: ({ nomeSala, date, turno, x, y, nomePrenotazione }) =>
+      salaApi.deleteGroupReservation(nomeSala, date, turno, x, y, nomePrenotazione),
+
+    onSuccess: async (_void, v) => {
+      // Aggiorna subito la cache locale per evitare liste stale in dialog
+      queryClient.setQueryData<Reservation[] | undefined>(
+        salaKeys.groupReservations(v.nomeSala, v.date, v.turno, v.x, v.y),
+        (old) => old?.filter((r) => r.nome !== v.nomePrenotazione)
+      );
+
+      await queryClient.invalidateQueries({
+        queryKey: salaKeys.groupReservations(v.nomeSala, v.date, v.turno, v.x, v.y),
+      });
+      await queryClient.invalidateQueries({
+        queryKey: salaKeys.tables(v.nomeSala, v.date, v.turno),
+      });
+      toast({
+        title: 'Prenotazione rimossa',
+        description: 'Prenotazione eliminata dal gruppo di tavoli.',
+      });
+    },
+
+    onError: (e) => {
+      const err = unknownToApiError(e);
+      toast({
+        title: 'Errore',
+        description: err.message || 'Impossibile rimuovere la prenotazione.',
         variant: 'destructive',
       });
     },
@@ -291,4 +364,3 @@ export function useSalaConfigurationCheck(nomeSala: string | undefined, date: st
     },
   });
 }
-

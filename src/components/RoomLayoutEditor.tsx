@@ -14,15 +14,25 @@ import {
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
-import { Receipt, Trash2, Users } from 'lucide-react';
+import { Loader2, Receipt, Trash2, Users } from 'lucide-react';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Slider } from '@/components/ui/slider';
 import { StatusDot } from '@/components/StatusBadge';
 import { PageLoader } from '@/components/LoadingSpinner';
 import { ErrorDisplay } from '@/components/ErrorDisplay';
+import { Button } from '@/components/ui/button';
+import { toast } from '@/hooks/use-toast';
+import { salaApi } from '@/api/sala';
 
-import { useAssignReservation, useCreateTables, useDeleteTable, useTables } from '@/hooks/use-sala';
+import {
+  useAssignReservation,
+  useCreateTables,
+  useDeleteGroupReservation,
+  useDeleteTable,
+  useGroupReservations,
+  useTables,
+} from '@/hooks/use-sala';
 import { useReservationsByDate, useReservation } from '@/hooks/use-reservations';
 
 import type { Reservation, Sala, TableStatus, Tavolo, TipoZona, Turno } from '@/types';
@@ -48,12 +58,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 type UILayoutReservation = Reservation & {
   turno?: Turno;
   tavoloAssegnato?: boolean;
+  assignedCoords?: { x: number; y: number };
 
   // compat: nel tuo vecchio UI usavi numeroPosti, ma il backend ha numPersone
   numeroPosti?: number;
 
   // ✅ placeholder per il futuro (oggi non arriva dal backend)
-  note?: string;
+  nota?: string;
 };
 
 type UILayoutTavolo = Tavolo & {
@@ -139,6 +150,10 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [selectedName, setSelectedName] = useState<string>('');
 
+  // dialog prenotazioni del tavolo/gruppo
+  const [selectedTableCoords, setSelectedTableCoords] = useState<{ x: number; y: number } | null>(null);
+  const [removingReservation, setRemovingReservation] = useState<string | null>(null);
+
   const openReservationDetails = (r: UILayoutReservation) => {
     setSelectedName(r.nome);
     setDetailsOpen(true);
@@ -149,6 +164,8 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
     // non resetto selectedName subito, così il dialog non “sfarfalla” durante close animation
     // se vuoi pulire: setSelectedName('');
   };
+
+  const closeGroupDialog = () => setSelectedTableCoords(null);
 
   // fetch dettaglio (solo quando dialog è aperto e ho nome)
   const {
@@ -172,18 +189,115 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
   const createTables = useCreateTables();
   const deleteTable = useDeleteTable();
   const assignReservation = useAssignReservation();
+  const deleteGroupReservation = useDeleteGroupReservation();
+
+  // asseganzioni note dal backend (nome prenotazione -> coords)
+  const [assignedFromBackend, setAssignedFromBackend] = useState<Map<string, { x: number; y: number }>>(new Map());
+  // versione per forzare refetch assegnazioni (es. dopo nuove assign)
+  const [assignmentsVersion, setAssignmentsVersion] = useState(0);
+
+  // mappa prenotazioni già assegnate (da tutti i tavoli della sala/turno/data)
+  const assignedReservationNames = useMemo(() => {
+    const set = new Set<string>();
+    tables?.forEach((t) => {
+      const anyTable = t as UILayoutTavolo;
+      if (anyTable.nomePrenotazione) set.add(anyTable.nomePrenotazione);
+    });
+    assignedFromBackend.forEach((_coords, name) => set.add(name));
+    return set;
+  }, [tables, assignedFromBackend]);
+
+  // mappa prenotazioni -> prima coppia di coordinate dove sono assegnate
+  const reservationAssignmentMap = useMemo(() => {
+    const map = new Map<string, { x: number; y: number }>();
+    tables?.forEach((t) => {
+      const anyTable = t as UILayoutTavolo;
+      if (anyTable.nomePrenotazione && !map.has(anyTable.nomePrenotazione)) {
+        map.set(anyTable.nomePrenotazione, { x: t.x, y: t.y });
+      }
+    });
+    assignedFromBackend.forEach((coords, name) => {
+      if (!map.has(name)) map.set(name, coords);
+    });
+    return map;
+  }, [tables, assignedFromBackend]);
+
+  const {
+    data: groupReservations,
+    isLoading: groupReservationsLoading,
+    error: groupReservationsError,
+    refetch: refetchGroupReservations,
+  } = useGroupReservations(
+    sala.nome,
+    date,
+    turno,
+    selectedTableCoords?.x,
+    selectedTableCoords?.y
+  );
 
   const unassignedReservations = useMemo<UILayoutReservation[]>(() => {
-  if (!reservations) return [];
-  const list = reservations as Reservation[];
+    if (!reservations) return [];
+    const list = reservations as Reservation[];
 
-  return list
-    .filter((r) => getTurnoFromOrario(r.orario) === turno /* && !r.tavoloAssegnato */)
-    .map((r) => ({
-      ...r,
-      numeroPosti: r.numPersone,
-    }));
-}, [reservations, turno]);
+    return list
+      .filter((r) => getTurnoFromOrario(r.orario) === turno)
+      .map((r) => ({
+        ...r,
+        numeroPosti: r.numPersone,
+        tavoloAssegnato: assignedReservationNames.has(r.nome),
+        assignedCoords: reservationAssignmentMap.get(r.nome),
+      }));
+  }, [reservations, turno, assignedReservationNames, reservationAssignmentMap]);
+
+  // fetch assegnazioni da backend (prenotazioni di gruppo) per tavoli, includendo prenotazioni multiple sullo stesso gruppo
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      if (!tables || tables.length === 0) {
+        setAssignedFromBackend(new Map());
+        return;
+      }
+
+      const map = new Map<string, { x: number; y: number }>();
+
+      const seenNames = new Set<string>();
+
+      // prima passata: uso la risposta tables (nomePrenotazione)
+      tables.forEach((t) => {
+        const anyTable = t as UILayoutTavolo;
+        if (anyTable.nomePrenotazione && !seenNames.has(anyTable.nomePrenotazione)) {
+          seenNames.add(anyTable.nomePrenotazione);
+          map.set(anyTable.nomePrenotazione, { x: t.x, y: t.y });
+        }
+      });
+
+      // seconda passata: chiamo le groupReservations per scoprire prenotazioni aggiuntive sul gruppo
+      await Promise.all(
+        tables.map(async (t) => {
+          try {
+            const res = await salaApi.getGroupReservations(sala.nome, date, turno, t.x, t.y);
+            res.forEach((p) => {
+              if (!seenNames.has(p.nome)) {
+                seenNames.add(p.nome);
+                map.set(p.nome, { x: t.x, y: t.y });
+              }
+            });
+          } catch (e) {
+            // ignore error: fallback to what tables already provide
+          }
+        })
+      );
+
+      if (!cancelled) {
+        setAssignedFromBackend(map);
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [tables, sala.nome, date, turno, assignmentsVersion]);
 
 
   const { width, height } = useMemo(() => getSalaSize(sala), [sala]);
@@ -425,10 +539,44 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
     });
   };
 
-  const handleTableTap = (x: number, y: number) => {
-    if (!canEditTables) return;
-    if (editMode !== 'DELETE') return;
-    setDeleteTarget({ x, y });
+  const handleTableClick = (x: number, y: number) => {
+    if (editMode === 'DELETE' && canEditTables) {
+      setDeleteTarget({ x, y });
+      return;
+    }
+
+    if (editMode !== 'NONE') return;
+    setSelectedTableCoords({ x, y });
+  };
+
+  useEffect(() => {
+    if (!selectedTableCoords) return;
+    void refetchGroupReservations();
+  }, [selectedTableCoords, refetchGroupReservations]);
+
+  const handleRemoveGroupReservation = async (nomePrenotazione: string) => {
+    if (!selectedTableCoords) return;
+    setRemovingReservation(nomePrenotazione);
+
+    try {
+      await deleteGroupReservation.mutateAsync({
+        nomeSala: sala.nome,
+        date,
+        turno,
+        x: selectedTableCoords.x,
+        y: selectedTableCoords.y,
+        nomePrenotazione,
+      });
+      // aggiorno cache locale assegnazioni per riflettere subito l'unassign
+      setAssignedFromBackend((prev) => {
+        const next = new Map(prev);
+        next.delete(nomePrenotazione);
+        return next;
+      });
+      await refetchGroupReservations();
+    } finally {
+      setRemovingReservation(null);
+    }
   };
 
   /* ======================
@@ -438,6 +586,15 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
   const handleDragStart = (event: DragStartEvent) => {
     if (!canEditTables) return;
     if (editMode !== 'NONE') return;
+    const dragData = event.active.data.current as DragData | undefined;
+    if (dragData?.type === 'reservation' && assignedReservationNames.has(dragData.name)) {
+      toast({
+        title: 'Prenotazione già assegnata',
+        description: 'Questa prenotazione è già associata a un tavolo. Rimuovila prima di spostarla.',
+        variant: 'destructive',
+      });
+      return;
+    }
     setActiveId(String(event.active.id));
   };
 
@@ -454,6 +611,15 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
     const dragData = active.data.current as DragData | undefined;
     if (!dragData) return;
 
+    if (dragData.type === 'reservation' && assignedReservationNames.has(dragData.name)) {
+      toast({
+        title: 'Prenotazione già assegnata',
+        description: 'Questa prenotazione è già associata a un tavolo. Rimuovila prima di spostarla.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     if (dragData.type === 'reservation' && overId.startsWith('table-')) {
       const [, xStr, yStr] = overId.split('-');
       const x = Number(xStr);
@@ -466,6 +632,8 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
         x,
         y,
         nomePrenotazione: dragData.name,
+      }, {
+        onSuccess: () => setAssignmentsVersion((v) => v + 1),
       });
     }
   };
@@ -553,10 +721,6 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
                     <div className="flex items-center gap-2">
                       <StatusDot status="RISERVATO" />
                       <span className="text-muted-foreground">Riservato</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <StatusDot status="OCCUPATO" />
-                      <span className="text-muted-foreground">Occupato</span>
                     </div>
                   </div>
 
@@ -697,8 +861,7 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
           editMode={editMode}
           canEditTables={canEditTables}
           onCellTap={() => handleCellTap(x, y)}
-          onTableTap={() => handleTableTap(x, y)}
-          onDeleteIcon={() => setDeleteTarget({ x, y })}
+          onTableClick={() => handleTableClick(x, y)}
         />
       );
     })}
@@ -787,6 +950,70 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
         </AlertDialog>
       </DndContext>
 
+      {/* Dialog Prenotazioni del Tavolo */}
+      <Dialog open={!!selectedTableCoords} onOpenChange={(o) => (o ? null : closeGroupDialog())}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              Prenotazioni tavolo {selectedTableCoords ? `(${selectedTableCoords.x}, ${selectedTableCoords.y})` : ''}
+            </DialogTitle>
+          </DialogHeader>
+
+          {groupReservationsLoading && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Caricamento prenotazioni...
+            </div>
+          )}
+
+          {groupReservationsError && (
+            <ErrorDisplay
+              message="Impossibile caricare le prenotazioni del tavolo."
+              onRetry={() => refetchGroupReservations()}
+            />
+          )}
+
+          {!groupReservationsLoading && !groupReservationsError && (
+            <div className="space-y-3">
+              {groupReservations && groupReservations.length > 0 ? (
+                groupReservations.map((r) => {
+                  const people = typeof r.numPersone === 'number' ? `${r.numPersone} persone` : '';
+                  return (
+                    <div
+                      key={r.nome}
+                      className="flex items-center justify-between gap-3 rounded-md border border-border/60 bg-secondary/40 px-3 py-2"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{r.nome}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {r.orario} {people && `· ${people}`}
+                        </p>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive hover:text-destructive-foreground hover:bg-destructive/10"
+                        disabled={deleteGroupReservation.isPending}
+                        onClick={() => handleRemoveGroupReservation(r.nome)}
+                      >
+                        {deleteGroupReservation.isPending && removingReservation === r.nome ? (
+                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                        ) : (
+                          <Trash2 className="h-4 w-4 mr-2" />
+                        )}
+                        Elimina dal gruppo
+                      </Button>
+                    </div>
+                  );
+                })
+              ) : (
+                <p className="text-sm text-muted-foreground">Nessuna prenotazione associata a questo gruppo.</p>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
       {/* ======================
           Dialog Dettagli Prenotazione
          ====================== */}
@@ -819,15 +1046,7 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
 
               <Row label="Telefono" value={reservationDetails?.numeroTelefono ?? '-'} />
 
-              {/* ✅ placeholder NOTE (oggi non esiste nel type backend) */}
-              <div className="pt-1">
-                <div className="text-muted-foreground mb-1">Note</div>
-                <div className="rounded-md border border-border/40 bg-secondary/30 p-2 min-h-[44px]">
-                  <span className="text-muted-foreground">
-                    Nessuna nota (campo disponibile a breve)
-                  </span>
-                </div>
-              </div>
+              <NoteBox nota={reservationDetails?.nota} />
             </div>
           )}
         </DialogContent>
@@ -845,6 +1064,20 @@ function Row({ label, value }: { label: string; value: string }) {
     <div className="flex items-center justify-between gap-3">
       <span className="text-muted-foreground">{label}</span>
       <span className="font-medium">{value}</span>
+    </div>
+  );
+}
+
+function NoteBox({ nota }: { nota?: string }) {
+  const text = nota?.trim();
+  const hasNote = !!text;
+
+  return (
+    <div className="pt-1">
+      <div className="text-muted-foreground mb-1">Note</div>
+      <div className="rounded-md border border-border/40 bg-secondary/30 p-2 min-h-[44px] whitespace-pre-line">
+        {hasNote ? <span>{text}</span> : <span className="text-muted-foreground">Nessuna nota</span>}
+      </div>
     </div>
   );
 }
@@ -869,8 +1102,7 @@ interface GridCellProps {
   canEditTables: boolean;
 
   onCellTap: () => void;
-  onTableTap: () => void;
-  onDeleteIcon: () => void;
+  onTableClick: () => void;
 }
 
 function GridCell({
@@ -884,8 +1116,7 @@ function GridCell({
   editMode,
   canEditTables,
   onCellTap,
-  onTableTap,
-  onDeleteIcon,
+  onTableClick,
 }: GridCellProps) {
   const isVivibile = tipoZona === 'SPAZIO_VIVIBILE';
 
@@ -931,9 +1162,8 @@ function GridCell({
       ref={setNodeRef}
       style={style}
       onClick={(e) => {
-        if (!canDeleteByTap) return;
         if (ignoreIfMultiTouch(e)) return;
-        onTableTap();
+        onTableClick();
       }}
       className={cn(
         'relative p-1 flex items-center justify-center transition-all overflow-hidden',
@@ -961,18 +1191,6 @@ function GridCell({
           {table.nomePrenotazione}
         </span>
       )}
-
-      {canEditTables && editMode === 'NONE' && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onDeleteIcon();
-          }}
-          className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-background/80 hover:bg-destructive hover:text-destructive-foreground flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity"
-        >
-          <Trash2 className="h-3 w-3" />
-        </button>
-      )}
     </div>
   );
 }
@@ -986,10 +1204,11 @@ function DraggableReservation({
   disabled?: boolean;
   onOpenDetails?: (r: UILayoutReservation) => void;
 }) {
+  const isAssigned = !!reservation.tavoloAssegnato;
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `reservation-${reservation.nome}`,
     data: { type: 'reservation', name: reservation.nome } as DragDataReservation,
-    disabled: !!disabled,
+    disabled: !!disabled || isAssigned,
   });
 
   const people =
@@ -1000,7 +1219,12 @@ function DraggableReservation({
         : undefined;
 
   return (
-    <div className={cn('flex items-center gap-2', disabled && 'opacity-60')}>
+    <div
+      className={cn(
+        'flex items-center gap-2',
+        (disabled || reservation.tavoloAssegnato) && 'opacity-60'
+      )}
+    >
       {/* CARD: cliccabile per dettagli, NON draggable */}
       <button
         type="button"
@@ -1009,7 +1233,8 @@ function DraggableReservation({
           'flex-1 min-w-0 flex items-center gap-3 p-3 rounded-lg text-left',
           'bg-secondary/50 border border-border/40',
           'transition-colors',
-          !disabled ? 'hover:bg-secondary/70 cursor-pointer' : 'cursor-not-allowed',
+          !disabled && !isAssigned ? 'hover:bg-secondary/70 cursor-pointer' : 'cursor-not-allowed',
+          isAssigned && 'border-emerald-300 bg-emerald-50 text-emerald-800',
           isDragging && 'opacity-60'
         )}
       >
@@ -1019,6 +1244,12 @@ function DraggableReservation({
             {reservation.orario} · {typeof people === 'number' ? `${people} persone` : 'persone: -'}
           </p>
         </div>
+
+        {isAssigned && (
+          <span className="text-[11px] font-semibold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full">
+            Assegnato
+          </span>
+        )}
       </button>
 
       {/* ✅ DRAG BUTTON separato */}
@@ -1026,9 +1257,9 @@ function DraggableReservation({
         ref={setNodeRef}
         type="button"
         aria-label="Trascina prenotazione sul tavolo"
-        disabled={!!disabled}
-        {...(!disabled ? listeners : {})}
-        {...(!disabled ? attributes : {})}
+        disabled={!!disabled || isAssigned}
+        {...(!disabled && !isAssigned ? listeners : {})}
+        {...(!disabled && !isAssigned ? attributes : {})}
         style={{
           touchAction: 'none',
           WebkitUserSelect: 'none',

@@ -26,6 +26,7 @@ export interface Reservation {
   date: string;          // yyyy-MM-dd (LocalDate, @JsonFormat)
   orario: string;        // HH:mm (LocalTime, @JsonFormat)
   numeroTelefono?: string;
+  nota?: string;
 }
 
 // lato back usi sempre Prenotazione come body, quindi puoi
