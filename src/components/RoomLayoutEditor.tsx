@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
   CollisionDetection,
   DndContext,
@@ -391,7 +391,7 @@ export function RoomLayoutEditor({
   }, []);
 
   const GAP = 2;
-  const PAD = 12;
+  const PAD = 0;
   const DESKTOP_VIEWPORT_H = 520;
 
   const [zoom, setZoom] = useState(1);
@@ -405,25 +405,7 @@ export function RoomLayoutEditor({
   const MAX_ZOOM = 3.5;
 
   const clampZoom = (z: number) => clamp(z, MIN_ZOOM, MAX_ZOOM);
-  const computeFitZoom = useCallback(() => {
-    const el = gridViewportRef.current;
-    if (!el) return 1;
-
-    const totalGapW = Math.max(0, width - 1) * GAP;
-    const totalGapH = Math.max(0, height - 1) * GAP;
-
-    const availW = Math.max(1, el.clientWidth - PAD * 2);
-    const availH = Math.max(1, viewportH - PAD * 2);
-
-    const denomW = Math.max(1, width * baseCell);
-    const denomH = Math.max(1, height * baseCell);
-
-    const fitW = (availW - totalGapW) / denomW;
-    const fitH = (availH - totalGapH) / denomH;
-
-    const fit = Math.min(fitW, fitH);
-    return clampZoom(fit);
-  }, [baseCell, height, width, viewportH]);
+  const [baseCell, setBaseCell] = useState(22);
 
   const dist2 = (t1: TouchPoint, t2: TouchPoint) => {
     const dx = t1.clientX - t2.clientX;
@@ -475,13 +457,31 @@ export function RoomLayoutEditor({
     }
   };
 
-  const [baseCell, setBaseCell] = useState(22);
-
   const viewportH = useMemo(() => {
     if (!isMobile) return DESKTOP_VIEWPORT_H;
     const vh = Math.floor(window.innerHeight * 0.7);
     return clamp(vh, 280, 720);
   }, [isMobile]);
+
+  const computeFitZoom = useCallback(() => {
+    const el = gridViewportRef.current;
+    if (!el) return 1;
+
+    const totalGapW = Math.max(0, width - 1) * GAP;
+    const totalGapH = Math.max(0, height - 1) * GAP;
+
+    const availW = Math.max(1, el.clientWidth - PAD * 2);
+    const availH = Math.max(1, viewportH - PAD * 2);
+
+    const denomW = Math.max(1, width * baseCell);
+    const denomH = Math.max(1, height * baseCell);
+
+    const fitW = (availW - totalGapW) / denomW;
+    const fitH = (availH - totalGapH) / denomH;
+
+    const fit = Math.min(fitW, fitH);
+    return clampZoom(fit);
+  }, [baseCell, height, width, viewportH]);
 
   const cellSize = useMemo(() => Math.round(baseCell * zoom), [baseCell, zoom]);
   const contentScale = useMemo(() => clamp(cellSize / 40, 0.45, 1), [cellSize]);
@@ -870,7 +870,7 @@ export function RoomLayoutEditor({
             </CardHeader>
 
             <CardContent className="min-w-0 min-h-0">
-              <div className="p-4 rounded-lg bg-secondary/30 w-full min-w-0 min-h-0">
+              <div className="p-2 rounded-lg bg-secondary/30 w-full min-w-0 min-h-0">
                 <div className="min-w-0 min-h-0">
                   <div
   key={layoutKey}
