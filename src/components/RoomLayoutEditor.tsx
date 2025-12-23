@@ -405,6 +405,25 @@ export function RoomLayoutEditor({
   const MAX_ZOOM = 3.5;
 
   const clampZoom = (z: number) => clamp(z, MIN_ZOOM, MAX_ZOOM);
+  const computeFitZoom = useCallback(() => {
+    const el = gridViewportRef.current;
+    if (!el) return 1;
+
+    const totalGapW = Math.max(0, width - 1) * GAP;
+    const totalGapH = Math.max(0, height - 1) * GAP;
+
+    const availW = Math.max(1, el.clientWidth - PAD * 2);
+    const availH = Math.max(1, viewportH - PAD * 2);
+
+    const denomW = Math.max(1, width * baseCell);
+    const denomH = Math.max(1, height * baseCell);
+
+    const fitW = (availW - totalGapW) / denomW;
+    const fitH = (availH - totalGapH) / denomH;
+
+    const fit = Math.min(fitW, fitH);
+    return clampZoom(fit);
+  }, [baseCell, height, width, viewportH]);
 
   const dist2 = (t1: TouchPoint, t2: TouchPoint) => {
     const dx = t1.clientX - t2.clientX;
@@ -476,6 +495,12 @@ export function RoomLayoutEditor({
       el.scrollTop = 0;
     }
   }, [layoutKey]);
+
+  // Applica automaticamente uno zoom che adatta l'intera sala al viewport
+  useLayoutEffect(() => {
+    const fit = computeFitZoom();
+    setZoom((prev) => (Math.abs(prev - fit) < 0.01 ? prev : fit));
+  }, [layoutKey, computeFitZoom]);
 
   useEffect(() => {
     const el = gridViewportRef.current;
@@ -935,6 +960,22 @@ export function RoomLayoutEditor({
                       onClick={() => setZoom(1)}
                     >
                       reset
+                    </button>
+
+                    <button
+                      type="button"
+                      className="text-[11px] text-muted-foreground hover:text-foreground"
+                      onClick={() => {
+                        const fit = computeFitZoom();
+                        setZoom(fit);
+                        const el = gridViewportRef.current;
+                        if (el) {
+                          el.scrollLeft = 0;
+                          el.scrollTop = 0;
+                        }
+                      }}
+                    >
+                      adatta
                     </button>
                   </div>
                 </div>
