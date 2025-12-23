@@ -118,3 +118,16 @@ export interface TableSummary {
   occupied: number;
   blocked: number;  // solo lato UI, NON mappato su StatoTavolo
 }
+
+// Template configurazione sala (backend)
+export interface SalaTemplateHeader {
+  nomeSala: string;
+  nomeTemplate: string;
+}
+
+export interface SalaTemplate {
+  nomeSala: string;
+  nomeTemplate: string;
+  sala?: Sala;
+  tavoli?: Tavolo[];
+}

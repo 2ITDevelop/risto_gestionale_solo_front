@@ -9,6 +9,8 @@ import type {
   Turno,
   CreateSalaConfigurationDto,
   Reservation,
+  SalaTemplateHeader,
+  SalaTemplate,
 } from '@/types';
 
 export const salaApi = {
@@ -100,4 +102,39 @@ export const salaApi = {
   // Get total available seats
   getTotalSeats: (nomeSala: string, date: string, turno: Turno): Promise<number> =>
     apiClient.get<number>(API_ENDPOINTS.sala.totalSeats(nomeSala, date, turno)),
+
+  // Templates - header/list
+  getTemplates: (nomeSala: string): Promise<SalaTemplateHeader[]> =>
+    apiClient.get<SalaTemplateHeader[]>(API_ENDPOINTS.sala.templates(nomeSala)),
+
+  createTemplateHeader: (nomeSala: string, nomeTemplate: string): Promise<void> =>
+    apiClient.post<void>(
+      API_ENDPOINTS.sala.templateByName(nomeSala, nomeTemplate),
+      undefined
+    ),
+
+  deleteTemplate: (nomeSala: string, nomeTemplate: string): Promise<void> =>
+    apiClient.delete<void>(API_ENDPOINTS.sala.templateByName(nomeSala, nomeTemplate)),
+
+  getTemplate: (nomeSala: string, nomeTemplate: string): Promise<SalaTemplate> =>
+    apiClient.get<SalaTemplate>(API_ENDPOINTS.sala.templateByName(nomeSala, nomeTemplate)),
+
+  getTemplateTables: (nomeSala: string, nomeTemplate: string): Promise<Tavolo[]> =>
+    apiClient.get<Tavolo[]>(API_ENDPOINTS.sala.templateTables(nomeSala, nomeTemplate)),
+
+  addTemplateTablesBatch: (nomeSala: string, nomeTemplate: string, tavoli: Tavolo[]): Promise<void> =>
+    apiClient.post<void, Tavolo[]>(
+      API_ENDPOINTS.sala.templateTablesBatch(nomeSala, nomeTemplate),
+      tavoli
+    ),
+
+  applyTemplate: (nomeSala: string, nomeTemplate: string, date: string, turno: Turno): Promise<void> =>
+    apiClient.post<void>(
+      API_ENDPOINTS.sala.templateApply(nomeSala, nomeTemplate, date, turno)
+    ),
+
+  createTemplateFromConfig: (nomeSala: string, nomeTemplate: string, date: string, turno: Turno): Promise<void> =>
+    apiClient.post<void>(
+      API_ENDPOINTS.sala.templateFromConfig(nomeSala, nomeTemplate, date, turno)
+    ),
 };

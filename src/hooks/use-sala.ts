@@ -9,6 +9,8 @@ import type {
   SalaConfiguration,
   CreateSalaConfigurationDto,
   Reservation,
+  SalaTemplateHeader,
+  SalaTemplate,
 } from '@/types';
 import { toast } from '@/hooks/use-toast';
 
@@ -47,12 +49,43 @@ export const salaKeys = {
 
   configuration: (nomeSala: string, date: string, turno: Turno) =>
     ['sala', 'configuration', nomeSala, date, turno] as const,
+  templates: (nomeSala: string) => ['sala', 'templates', nomeSala] as const,
+  template: (nomeSala: string, nomeTemplate: string) => ['sala', 'template', nomeSala, nomeTemplate] as const,
 };
 
 export function useSalas() {
   return useQuery<Sala[], ApiError>({
     queryKey: salaKeys.all,
     queryFn: salaApi.getAll,
+    staleTime: 5 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useSalaTemplates(nomeSala: string | undefined) {
+  const enabled = !!nomeSala && nomeSala.trim().length > 0;
+
+  return useQuery<SalaTemplateHeader[], ApiError>({
+    queryKey: enabled ? salaKeys.templates(nomeSala) : ['sala', 'templates', 'disabled'],
+    queryFn: () => salaApi.getTemplates(nomeSala as string),
+    enabled,
+    staleTime: 5 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useSalaTemplate(nomeSala: string | undefined, nomeTemplate: string | undefined) {
+  const enabled =
+    !!nomeSala && nomeSala.trim().length > 0 && !!nomeTemplate && nomeTemplate.trim().length > 0;
+
+  return useQuery<SalaTemplate, ApiError>({
+    queryKey: enabled
+      ? salaKeys.template(nomeSala as string, nomeTemplate as string)
+      : ['sala', 'template', 'disabled'],
+    queryFn: () => salaApi.getTemplate(nomeSala as string, nomeTemplate as string),
+    enabled,
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
     placeholderData: keepPreviousData,
@@ -364,6 +397,78 @@ export function useSalaConfigurationCheck(nomeSala: string | undefined, date: st
         if (err.status === 404) return null;
         throw err;
       }
+    },
+  });
+}
+
+export function useCreateTemplateFromConfig() {
+  const queryClient = useQueryClient();
+
+  return useMutation<void, ApiError, { nomeSala: string; nomeTemplate: string; date: string; turno: Turno }>({
+    mutationFn: ({ nomeSala, nomeTemplate, date, turno }) =>
+      salaApi.createTemplateFromConfig(nomeSala, nomeTemplate, date, turno),
+    onSuccess: async (_void, v) => {
+      await queryClient.invalidateQueries({ queryKey: salaKeys.templates(v.nomeSala) });
+      toast({
+        title: 'Template creato',
+        description: `Template "${v.nomeTemplate}" creato dalla configurazione selezionata.`,
+      });
+    },
+    onError: (e) => {
+      const err = unknownToApiError(e);
+      toast({
+        title: 'Errore',
+        description: err.message || 'Impossibile creare il template.',
+        variant: 'destructive',
+      });
+    },
+  });
+}
+
+export function useApplyTemplate() {
+  const queryClient = useQueryClient();
+
+  return useMutation<void, ApiError, { nomeSala: string; nomeTemplate: string; date: string; turno: Turno }>({
+    mutationFn: ({ nomeSala, nomeTemplate, date, turno }) =>
+      salaApi.applyTemplate(nomeSala, nomeTemplate, date, turno),
+    onSuccess: async (_void, v) => {
+      await queryClient.invalidateQueries({ queryKey: salaKeys.tables(v.nomeSala, v.date, v.turno) });
+      await queryClient.invalidateQueries({ queryKey: salaKeys.configuration(v.nomeSala, v.date, v.turno) });
+      toast({
+        title: 'Template applicato',
+        description: `Template "${v.nomeTemplate}" applicato a ${v.date} (${v.turno}).`,
+      });
+    },
+    onError: (e) => {
+      const err = unknownToApiError(e);
+      toast({
+        title: 'Errore',
+        description: err.message || 'Impossibile applicare il template.',
+        variant: 'destructive',
+      });
+    },
+  });
+}
+
+export function useDeleteTemplate() {
+  const queryClient = useQueryClient();
+
+  return useMutation<void, ApiError, { nomeSala: string; nomeTemplate: string }>({
+    mutationFn: ({ nomeSala, nomeTemplate }) => salaApi.deleteTemplate(nomeSala, nomeTemplate),
+    onSuccess: async (_void, v) => {
+      await queryClient.invalidateQueries({ queryKey: salaKeys.templates(v.nomeSala) });
+      toast({
+        title: 'Template eliminato',
+        description: `Template "${v.nomeTemplate}" eliminato.`,
+      });
+    },
+    onError: (e) => {
+      const err = unknownToApiError(e);
+      toast({
+        title: 'Errore',
+        description: err.message || 'Impossibile eliminare il template.',
+        variant: 'destructive',
+      });
     },
   });
 }

@@ -39,6 +39,17 @@ export const API_ENDPOINTS = {
       `/api/sala/posti/${encodeURIComponent(nomeSala)}/${date}/${turno}/gruppi`,
     totalSeats: (nomeSala: string, date: string, turno: string) =>
       `/api/sala/posti/${encodeURIComponent(nomeSala)}/${date}/${turno}/totale`,
+    templates: (nomeSala: string) => `/api/sala/${encodeURIComponent(nomeSala)}/templates`,
+    templateByName: (nomeSala: string, nomeTemplate: string) =>
+      `/api/sala/${encodeURIComponent(nomeSala)}/templates/${encodeURIComponent(nomeTemplate)}`,
+    templateTables: (nomeSala: string, nomeTemplate: string) =>
+      `/api/sala/${encodeURIComponent(nomeSala)}/templates/${encodeURIComponent(nomeTemplate)}/tavoli`,
+    templateTablesBatch: (nomeSala: string, nomeTemplate: string) =>
+      `/api/sala/${encodeURIComponent(nomeSala)}/templates/${encodeURIComponent(nomeTemplate)}/tavoli/batch`,
+    templateApply: (nomeSala: string, nomeTemplate: string, date: string, turno: string) =>
+      `/api/sala/${encodeURIComponent(nomeSala)}/templates/${encodeURIComponent(nomeTemplate)}/apply/${date}/${turno}`,
+    templateFromConfig: (nomeSala: string, nomeTemplate: string, date: string, turno: string) =>
+      `/api/sala/${encodeURIComponent(nomeSala)}/templates/${encodeURIComponent(nomeTemplate)}/from-config/${date}/${turno}`,
   },
   
   // Working Days

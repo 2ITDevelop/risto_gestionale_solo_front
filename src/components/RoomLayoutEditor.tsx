@@ -137,11 +137,20 @@ interface RoomLayoutEditorProps {
   date: string;
   turno: Turno;
   canEditTables: boolean;
+  onOpenCreateTemplate?: () => void;
+  canCreateTemplate?: boolean;
 }
 
 type EditMode = 'NONE' | 'ADD' | 'DELETE';
 
-export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayoutEditorProps) {
+export function RoomLayoutEditor({
+  sala,
+  date,
+  turno,
+  canEditTables,
+  onOpenCreateTemplate,
+  canCreateTemplate = false,
+}: RoomLayoutEditorProps) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ x: number; y: number } | null>(null);
   const [editMode, setEditMode] = useState<EditMode>('NONE');
@@ -801,6 +810,20 @@ export function RoomLayoutEditor({ sala, date, turno, canEditTables }: RoomLayou
                 >
                   Fine
                 </button>
+
+                {onOpenCreateTemplate && (
+                  <button
+                    type="button"
+                    onClick={onOpenCreateTemplate}
+                    disabled={!canCreateTemplate}
+                    className={cn(
+                      'text-sm font-medium text-primary underline-offset-2 hover:underline',
+                      (!canCreateTemplate) && 'opacity-50 cursor-not-allowed text-muted-foreground'
+                    )}
+                  >
+                    Crea template
+                  </button>
+                )}
 
                 {editMode === 'ADD' && (
                   <span className="text-xs text-muted-foreground ml-2">

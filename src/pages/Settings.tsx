@@ -1,16 +1,23 @@
-import { useState } from 'react';
-import { Plus, Trash2, LayoutGrid, Settings as SettingsIcon } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Plus, Trash2, LayoutGrid, Settings as SettingsIcon, Layers, Trash } from 'lucide-react';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 import { PageLoader } from '@/components/LoadingSpinner';
 import { ErrorDisplay } from '@/components/ErrorDisplay';
 import { EmptyState } from '@/components/EmptyState';
 
-import { useSalas, useCreateSala, useDeleteSala } from '@/hooks/use-sala';
+import {
+  useSalas,
+  useCreateSala,
+  useDeleteSala,
+  useSalaTemplates,
+  useDeleteTemplate,
+} from '@/hooks/use-sala';
 import type { Sala, CreateSalaDto, ZonaSala } from '@/types';
 
 import {
@@ -54,16 +61,78 @@ export default function Settings() {
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [editingSala, setEditingSala] = useState<Sala | null>(null);
+  const [selectedSalaName, setSelectedSalaName] = useState<string | null>(null);
 
   const { data: salasRaw, isLoading, error, refetch } = useSalas();
   const deleteSala = useDeleteSala();
+  const deleteTemplate = useDeleteTemplate();
 
   const salas: Sala[] = Array.isArray(salasRaw) ? salasRaw : [];
+  const selectedSala = useMemo(
+    () => salas.find((s) => s.nome === selectedSalaName) || null,
+    [salas, selectedSalaName]
+  );
+
+  useEffect(() => {
+    if (selectedSala) return;
+    if (salas.length === 0) {
+      setSelectedSalaName(null);
+      return;
+    }
+    setSelectedSalaName(salas[0].nome);
+  }, [salas, selectedSala]);
+
+  const {
+    data: templatesRaw,
+    isLoading: templatesLoading,
+    error: templatesError,
+    refetch: refetchTemplates,
+  } = useSalaTemplates(selectedSala?.nome);
+  const templates = useMemo(() => {
+    const normalizeItem = (raw: any) => {
+      if (typeof raw === 'string') {
+        return { name: raw, salaName: selectedSala?.nome ?? '' };
+      }
+
+      const name =
+        raw?.nomeTemplate ??
+        raw?.templateName ??
+        raw?.nome ??
+        raw?.template ??
+        raw?.name ??
+        '';
+
+      const salaName =
+        raw?.nomeSala ??
+        raw?.sala ??
+        raw?.salaNome ??
+        raw?.roomName ??
+        raw?.sala?.nome ??
+        selectedSala?.nome ??
+        '';
+
+      if (!name) return null;
+      return { name, salaName };
+    };
+
+    const list = Array.isArray(templatesRaw)
+      ? templatesRaw
+      : Array.isArray((templatesRaw as any)?.templates)
+        ? (templatesRaw as any).templates
+        : [];
+
+    return list.map(normalizeItem).filter(Boolean) as { name: string; salaName: string }[];
+  }, [templatesRaw, selectedSala?.nome]);
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
     await deleteSala.mutateAsync(deleteTarget);
     setDeleteTarget(null);
+  };
+
+  const handleDeleteTemplate = async (nomeTemplate: string) => {
+    if (!selectedSala) return;
+    await deleteTemplate.mutateAsync({ nomeSala: selectedSala.nome, nomeTemplate });
   };
 
   if (isLoading) return <PageLoader text="Caricamento impostazioni..." />;
@@ -91,6 +160,10 @@ export default function Settings() {
           <TabsTrigger value="rooms">
             <LayoutGrid className="h-4 w-4 mr-2" />
             Sale
+          </TabsTrigger>
+          <TabsTrigger value="templates">
+            <Layers className="h-4 w-4 mr-2" />
+            Template sala
           </TabsTrigger>
           <TabsTrigger value="general">
             <SettingsIcon className="h-4 w-4 mr-2" />
@@ -172,6 +245,86 @@ export default function Settings() {
               </CardContent>
             </Card>
           )}
+        </TabsContent>
+
+        <TabsContent value="templates" className="mt-6 space-y-6">
+          <Card className="glass-card">
+            <CardHeader>
+              <CardTitle>Template sala</CardTitle>
+              <CardDescription>Visualizza ed elimina i template esistenti per ciascuna sala.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="space-y-2 max-w-sm">
+                <Label>Sala</Label>
+                <Select
+                  value={selectedSala?.nome || ''}
+                  onValueChange={(val) => setSelectedSalaName(val)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Seleziona una sala" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {salas.map((sala) => (
+                      <SelectItem key={sala.nome} value={sala.nome}>
+                        {sala.nome}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {!selectedSala && (
+                <p className="text-sm text-muted-foreground">
+                  Seleziona una sala per vedere i template disponibili.
+                </p>
+              )}
+
+              {selectedSala && (
+                <Card className="border">
+                  <CardHeader>
+                    <CardTitle>Template di {selectedSala.nome}</CardTitle>
+                    <CardDescription>Lista dei template salvati per questa sala.</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    {templatesError ? (
+                      <ErrorDisplay
+                        message="Impossibile caricare i template."
+                        onRetry={() => refetchTemplates()}
+                      />
+                    ) : templatesLoading ? (
+                      <PageLoader text="Caricamento template..." />
+                    ) : templates.length === 0 ? (
+                      <EmptyState
+                        icon={Layers}
+                        title="Nessun template"
+                        description="Non ci sono template salvati per questa sala."
+                      />
+                    ) : (
+                      <div className="space-y-3">
+                        {templates.map((t) => (
+                          <div
+                            key={t.name}
+                            className="flex items-center justify-between gap-3 rounded-lg border p-3"
+                          >
+                            <span className="font-medium">{t.name}</span>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleDeleteTemplate(t.name)}
+                              disabled={deleteTemplate.isPending}
+                              className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                            >
+                              <Trash className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent value="general" className="mt-6">
