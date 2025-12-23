@@ -1,7 +1,10 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { workingDaysApi } from '@/api/working-days';
 import type { WorkingDay, WorkingDayType, CreateWorkingDayDto } from '@/types';
 import { toast } from '@/hooks/use-toast';
+
+const STALE_TIME_MS = 5 * 60 * 1000; // 5 minuti di cache "calda" per navigazioni rapide
+const GC_TIME_MS = 30 * 60 * 1000;   // tieni i dati in cache più a lungo per riuso
 
 export const workingDayKeys = {
   all: ['workingDays'] as const,
@@ -12,6 +15,9 @@ export function useWorkingDays() {
   return useQuery({
     queryKey: workingDayKeys.all,
     queryFn: workingDaysApi.getAll,
+    staleTime: STALE_TIME_MS,
+    gcTime: GC_TIME_MS,
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -20,6 +26,9 @@ export function useWorkingDaysByType(type: WorkingDayType) {
     queryKey: workingDayKeys.byType(type),
     queryFn: () => workingDaysApi.getByType(type),
     enabled: !!type,
+    staleTime: STALE_TIME_MS,
+    gcTime: GC_TIME_MS,
+    placeholderData: keepPreviousData,
   });
 }
 

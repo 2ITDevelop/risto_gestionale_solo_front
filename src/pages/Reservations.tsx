@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { 
   Plus, 
@@ -10,6 +10,7 @@ import {
   Filter,
   X
 } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -29,6 +30,10 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useReservationsByDate, useDeleteReservation } from '@/hooks/use-reservations';
+import { workingDaysApi } from '@/api/working-days';
+import { salaApi } from '@/api/sala';
+import { workingDayKeys } from '@/hooks/use-working-days';
+import { salaKeys } from '@/hooks/use-sala';
 import { formatDateForApi, formatDateForDisplay } from '@/lib/date-utils';
 import type { Turno, Reservation } from '@/types';
 import { cn } from '@/lib/utils';
@@ -45,6 +50,22 @@ export default function Reservations() {
   const [searchQuery, setSearchQuery] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<{ date: string; nome: string } | null>(null);
   const [showFilters, setShowFilters] = useState(false);
+  const queryClient = useQueryClient();
+
+  const prefetchNewReservationData = useCallback(() => {
+    queryClient.prefetchQuery({
+      queryKey: workingDayKeys.all,
+      queryFn: workingDaysApi.getAll,
+    });
+    queryClient.prefetchQuery({
+      queryKey: salaKeys.all,
+      queryFn: salaApi.getAll,
+    });
+  }, [queryClient]);
+
+  useEffect(() => {
+    prefetchNewReservationData();
+  }, [prefetchNewReservationData]);
   
   const dateApi = formatDateForApi(selectedDate);
   
@@ -111,7 +132,7 @@ export default function Reservations() {
             {formatDateForDisplay(selectedDate)}
           </p>
         </div>
-        <Button asChild>
+        <Button asChild onMouseEnter={prefetchNewReservationData}>
           <Link to="/reservations/new">
             <Plus className="h-4 w-4 mr-2" />
             Nuova Prenotazione

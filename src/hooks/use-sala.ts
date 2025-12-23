@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { salaApi } from '@/api/sala';
 import type {
   Sala,
@@ -53,6 +53,9 @@ export function useSalas() {
   return useQuery<Sala[], ApiError>({
     queryKey: salaKeys.all,
     queryFn: salaApi.getAll,
+    staleTime: 5 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+    placeholderData: keepPreviousData,
   });
 }
 
