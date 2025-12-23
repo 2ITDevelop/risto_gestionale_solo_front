@@ -817,7 +817,8 @@ export function RoomLayoutEditor({
                     onClick={onOpenCreateTemplate}
                     disabled={!canCreateTemplate}
                     className={cn(
-                      'text-sm font-medium text-primary underline-offset-2 hover:underline',
+                      'px-3 py-1.5 rounded-md text-sm border transition-colors',
+                      'border-primary text-primary bg-transparent hover:bg-primary/10',
                       (!canCreateTemplate) && 'opacity-50 cursor-not-allowed text-muted-foreground'
                     )}
                   >
